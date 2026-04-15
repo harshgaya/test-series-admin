@@ -1,0 +1,502 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ADMINS ───────────────────────────────────────
+model Admin {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  questions     Question[]
+  tests         Test[]
+  crashCourses  CrashCourse[]
+  announcements Announcement[]
+  resolvedReports QuestionReport[] @relation("ResolvedBy")
+
+  @@map("admins")
+}
+
+// ─── STUDENTS ─────────────────────────────────────
+model Student {
+  id           Int       @id @default(autoincrement())
+  name         String
+  email        String?   @unique
+  phone        String?   @unique
+  passwordHash String?   @map("password_hash")
+  googleId     String?   @unique @map("google_id")
+  avatarUrl    String?   @map("avatar_url")
+  targetExamId Int?      @map("target_exam_id")
+  targetYear   Int?      @map("target_year")
+  isBlocked    Boolean   @default(false) @map("is_blocked")
+  freeAccess   Boolean   @default(false) @map("free_access")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  targetExam  Exam?                   @relation(fields: [targetExamId], references: [id])
+  purchases   TestPurchase[]
+  attempts    TestAttempt[]
+  payments    Payment[]
+  reports     QuestionReport[]
+  enrollments CrashCourseEnrollment[]
+
+  @@map("students")
+}
+
+// ─── EXAMS ────────────────────────────────────────
+model Exam {
+  id          Int      @id @default(autoincrement())
+  name        String
+  slug        String   @unique
+  track       String
+  logoUrl     String?  @map("logo_url")
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  orderIndex  Int      @default(0) @map("order_index")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  subjects     Subject[]
+  questions    Question[]
+  tests        Test[]
+  crashCourses CrashCourse[]
+  students     Student[]
+
+  @@map("exams")
+}
+
+// ─── SUBJECTS ─────────────────────────────────────
+model Subject {
+  id         Int      @id @default(autoincrement())
+  examId     Int      @map("exam_id")
+  name       String
+  slug       String
+  iconUrl    String?  @map("icon_url")
+  isActive   Boolean  @default(true) @map("is_active")
+  orderIndex Int      @default(0) @map("order_index")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  exam      Exam       @relation(fields: [examId], references: [id], onDelete: Cascade)
+  chapters  Chapter[]
+  questions Question[]
+  tests     Test[]
+
+  @@unique([examId, slug])
+  @@map("subjects")
+}
+
+// ─── CHAPTERS ─────────────────────────────────────
+model Chapter {
+  id          Int      @id @default(autoincrement())
+  subjectId   Int      @map("subject_id")
+  name        String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  orderIndex  Int      @default(0) @map("order_index")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  subject   Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topics    Topic[]
+  questions Question[]
+  tests     Test[]
+
+  @@map("chapters")
+}
+
+// ─── TOPICS ───────────────────────────────────────
+model Topic {
+  id         Int      @id @default(autoincrement())
+  chapterId  Int      @map("chapter_id")
+  name       String
+  isActive   Boolean  @default(true) @map("is_active")
+  orderIndex Int      @default(0) @map("order_index")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  chapter   Chapter    @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  questions Question[]
+  tests     Test[]
+
+  @@map("topics")
+}
+
+// ─── QUESTIONS ────────────────────────────────────
+model Question {
+  id                 Int          @id @default(autoincrement())
+  examId             Int          @map("exam_id")
+  subjectId          Int          @map("subject_id")
+  chapterId          Int          @map("chapter_id")
+  topicId            Int?         @map("topic_id")
+  questionText       String       @map("question_text")
+  questionImageUrl   String?      @map("question_image_url")
+  questionType       QuestionType @default(MCQ) @map("question_type")
+  difficulty         Difficulty   @default(MEDIUM)
+  solutionText       String?      @map("solution_text")
+  solutionImageUrl   String?      @map("solution_image_url")
+  solutionPdfUrl     String?      @map("solution_pdf_url")
+  solutionAudioUrl   String?      @map("solution_audio_url")
+  solutionVideoUrl   String?      @map("solution_video_url")
+  integerAnswer      Decimal?     @map("integer_answer")
+  isActive           Boolean      @default(true) @map("is_active")
+  usageCount         Int          @default(0) @map("usage_count")
+  attemptCount       Int          @default(0) @map("attempt_count")
+  correctCount       Int          @default(0) @map("correct_count")
+  createdBy          Int?         @map("created_by")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  exam           Exam             @relation(fields: [examId],     references: [id])
+  subject        Subject          @relation(fields: [subjectId],  references: [id])
+  chapter        Chapter          @relation(fields: [chapterId],  references: [id])
+  topic          Topic?           @relation(fields: [topicId],    references: [id])
+  admin          Admin?           @relation(fields: [createdBy],  references: [id])
+  options        QuestionOption[]
+  testQuestions  TestQuestion[]
+  attemptAnswers AttemptAnswer[]
+  reports        QuestionReport[]
+
+  @@index([examId])
+  @@index([subjectId])
+  @@index([chapterId])
+  @@index([topicId])
+  @@index([questionType])
+  @@index([difficulty])
+  @@map("questions")
+}
+
+// ─── QUESTION OPTIONS ─────────────────────────────
+model QuestionOption {
+  id             Int      @id @default(autoincrement())
+  questionId     Int      @map("question_id")
+  label          String
+  optionText     String   @map("option_text")
+  optionImageUrl String?  @map("option_image_url")
+  isCorrect      Boolean  @default(false) @map("is_correct")
+  orderIndex     Int      @default(0) @map("order_index")
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("question_options")
+}
+
+// ─── TESTS ────────────────────────────────────────
+model Test {
+  id              Int        @id @default(autoincrement())
+  title           String
+  description     String?
+  examId          Int        @map("exam_id")
+  subjectId       Int?       @map("subject_id")
+  chapterId       Int?       @map("chapter_id")
+  topicId         Int?       @map("topic_id")
+  testType        TestType   @map("test_type")
+  durationMins    Int        @default(60) @map("duration_mins")
+  totalMarks      Int        @default(0) @map("total_marks")
+  negativeMarking Decimal    @default(-1) @map("negative_marking")
+  marksCorrect    Int        @default(4) @map("marks_correct")
+  attemptLimit    Int        @default(0) @map("attempt_limit")
+  price           Decimal    @default(0)
+  showSolutions   Boolean    @default(true) @map("show_solutions")
+  showAnswers     Boolean    @default(true) @map("show_answers")
+  showRank        Boolean    @default(true) @map("show_rank")
+  showLeaderboard Boolean    @default(true) @map("show_leaderboard")
+  status          TestStatus @default(DRAFT)
+  scheduledAt     DateTime?  @map("scheduled_at")
+  startedAt       DateTime?  @map("started_at")
+  endedAt         DateTime?  @map("ended_at")
+  attemptCount    Int        @default(0) @map("attempt_count")
+  createdBy       Int?       @map("created_by")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  exam             Exam              @relation(fields: [examId],    references: [id])
+  subject          Subject?          @relation(fields: [subjectId], references: [id])
+  chapter          Chapter?          @relation(fields: [chapterId], references: [id])
+  topic            Topic?            @relation(fields: [topicId],   references: [id])
+  admin            Admin?            @relation(fields: [createdBy], references: [id])
+  testQuestions    TestQuestion[]
+  purchases        TestPurchase[]
+  attempts         TestAttempt[]
+  payments         Payment[]
+  crashCourseTests CrashCourseTest[]
+
+  @@index([examId])
+  @@index([testType])
+  @@index([status])
+  @@map("tests")
+}
+
+// ─── TEST QUESTIONS ───────────────────────────────
+model TestQuestion {
+  id         Int @id @default(autoincrement())
+  testId     Int @map("test_id")
+  questionId Int @map("question_id")
+  marks      Int @default(4)
+  orderIndex Int @default(0) @map("order_index")
+
+  test     Test     @relation(fields: [testId],     references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id])
+
+  @@unique([testId, questionId])
+  @@map("test_questions")
+}
+
+// ─── TEST PURCHASES ───────────────────────────────
+model TestPurchase {
+  id          Int      @id @default(autoincrement())
+  studentId   Int      @map("student_id")
+  testId      Int      @map("test_id")
+  amountPaid  Decimal  @map("amount_paid")
+  paymentId   String?  @map("payment_id")
+  orderId     String?  @map("order_id")
+  status      String   @default("success")
+  purchasedAt DateTime @default(now()) @map("purchased_at")
+
+  student Student @relation(fields: [studentId], references: [id])
+  test    Test    @relation(fields: [testId],    references: [id])
+
+  @@unique([studentId, testId])
+  @@index([studentId])
+  @@index([testId])
+  @@map("test_purchases")
+}
+
+// ─── TEST ATTEMPTS ────────────────────────────────
+model TestAttempt {
+  id            Int           @id @default(autoincrement())
+  studentId     Int           @map("student_id")
+  testId        Int           @map("test_id")
+  attemptNumber Int           @default(1) @map("attempt_number")
+  startedAt     DateTime      @default(now()) @map("started_at")
+  submittedAt   DateTime?     @map("submitted_at")
+  timeTakenSecs Int?          @map("time_taken_secs")
+  score         Decimal       @default(0)
+  totalMarks    Int           @default(0) @map("total_marks")
+  correctCount  Int           @default(0) @map("correct_count")
+  wrongCount    Int           @default(0) @map("wrong_count")
+  skippedCount  Int           @default(0) @map("skipped_count")
+  rank          Int?
+  percentile    Decimal?
+  totalAttempted Int?         @map("total_attempted")
+  status        AttemptStatus @default(IN_PROGRESS)
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  student Student         @relation(fields: [studentId], references: [id])
+  test    Test            @relation(fields: [testId],    references: [id])
+  answers AttemptAnswer[]
+
+  @@index([studentId])
+  @@index([testId])
+  @@index([status])
+  @@map("test_attempts")
+}
+
+// ─── ATTEMPT ANSWERS ──────────────────────────────
+model AttemptAnswer {
+  id              Int      @id @default(autoincrement())
+  attemptId       Int      @map("attempt_id")
+  questionId      Int      @map("question_id")
+  selectedOption  String?  @map("selected_option")
+  selectedOptions String[] @map("selected_options")
+  integerAnswer   Decimal? @map("integer_answer")
+  isCorrect       Boolean? @map("is_correct")
+  isMarked        Boolean  @default(false) @map("is_marked")
+  marksAwarded    Decimal  @default(0) @map("marks_awarded")
+  timeSpentSecs   Int      @default(0) @map("time_spent_secs")
+  answeredAt      DateTime @default(now()) @map("answered_at")
+
+  attempt  TestAttempt @relation(fields: [attemptId],  references: [id], onDelete: Cascade)
+  question Question    @relation(fields: [questionId], references: [id])
+
+  @@index([attemptId])
+  @@index([questionId])
+  @@map("attempt_answers")
+}
+
+// ─── CRASH COURSES ────────────────────────────────
+model CrashCourse {
+  id           Int      @id @default(autoincrement())
+  examId       Int      @map("exam_id")
+  title        String
+  description  String?
+  durationDays Int      @default(30) @map("duration_days")
+  price        Decimal  @default(0)
+  isActive     Boolean  @default(false) @map("is_active")
+  createdBy    Int?     @map("created_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  exam        Exam                    @relation(fields: [examId],    references: [id])
+  admin       Admin?                  @relation(fields: [createdBy], references: [id])
+  courseTests CrashCourseTest[]
+  enrollments CrashCourseEnrollment[]
+
+  @@map("crash_courses")
+}
+
+// ─── CRASH COURSE TESTS ───────────────────────────
+model CrashCourseTest {
+  id             Int @id @default(autoincrement())
+  crashCourseId  Int @map("crash_course_id")
+  testId         Int @map("test_id")
+  dayNumber      Int @map("day_number")
+  unlockAfterDay Int? @map("unlock_after_day")
+  orderIndex     Int @default(0) @map("order_index")
+
+  crashCourse CrashCourse @relation(fields: [crashCourseId], references: [id], onDelete: Cascade)
+  test        Test        @relation(fields: [testId],        references: [id])
+
+  @@unique([crashCourseId, dayNumber])
+  @@map("crash_course_tests")
+}
+
+// ─── CRASH COURSE ENROLLMENTS ─────────────────────
+model CrashCourseEnrollment {
+  id            Int       @id @default(autoincrement())
+  studentId     Int       @map("student_id")
+  crashCourseId Int       @map("crash_course_id")
+  currentDay    Int       @default(1) @map("current_day")
+  enrolledAt    DateTime  @default(now()) @map("enrolled_at")
+  completedAt   DateTime? @map("completed_at")
+
+  student     Student     @relation(fields: [studentId],     references: [id])
+  crashCourse CrashCourse @relation(fields: [crashCourseId], references: [id])
+
+  @@unique([studentId, crashCourseId])
+  @@map("crash_course_enrollments")
+}
+
+// ─── ANNOUNCEMENTS ────────────────────────────────
+model Announcement {
+  id               Int       @id @default(autoincrement())
+  title            String
+  message          String
+  showOnHomepage   Boolean   @default(true) @map("show_on_homepage")
+  showOnDashboard  Boolean   @default(true) @map("show_on_dashboard")
+  isActive         Boolean   @default(true) @map("is_active")
+  expiresAt        DateTime? @map("expires_at")
+  createdBy        Int?      @map("created_by")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  admin Admin? @relation(fields: [createdBy], references: [id])
+
+  @@map("announcements")
+}
+
+// ─── QUESTION REPORTS ─────────────────────────────
+model QuestionReport {
+  id          Int       @id @default(autoincrement())
+  questionId  Int       @map("question_id")
+  studentId   Int       @map("student_id")
+  reportType  String    @map("report_type")
+  description String?
+  status      String    @default("pending")
+  resolvedBy  Int?      @map("resolved_by")
+  resolvedAt  DateTime? @map("resolved_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  question Question @relation(fields: [questionId], references: [id])
+  student  Student  @relation(fields: [studentId],  references: [id])
+  admin    Admin?   @relation("ResolvedBy", fields: [resolvedBy], references: [id])
+
+  @@map("question_reports")
+}
+
+// ─── PAYMENTS ─────────────────────────────────────
+model Payment {
+  id                  Int           @id @default(autoincrement())
+  studentId           Int           @map("student_id")
+  testId              Int?          @map("test_id")
+  crashCourseId       Int?          @map("crash_course_id")
+  razorpayOrderId     String        @unique @map("razorpay_order_id")
+  razorpayPaymentId   String?       @unique @map("razorpay_payment_id")
+  razorpaySignature   String?       @map("razorpay_signature")
+  amount              Decimal
+  currency            String        @default("INR")
+  status              PaymentStatus @default(PENDING)
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  student Student @relation(fields: [studentId], references: [id])
+  test    Test?   @relation(fields: [testId],    references: [id])
+
+  @@index([studentId])
+  @@index([status])
+  @@map("payments")
+}
+
+// ─── SETTINGS ─────────────────────────────────────
+model Setting {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+// ─── ENUMS ────────────────────────────────────────
+enum QuestionType {
+  MCQ
+  INTEGER
+  MULTI_CORRECT
+
+  @@map("question_type")
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+
+  @@map("difficulty")
+}
+
+enum TestType {
+  TOPIC
+  CHAPTER
+  SECTIONAL
+  SUBJECT
+  FULL_MOCK
+  PYP
+  LIVE
+  FREE
+  SCHOLARSHIP
+  SPEED
+  DPT
+  MICRO
+  CONCEPT
+  DIFFICULTY_LADDER
+  NTA_SIMULATOR
+
+  @@map("test_type")
+}
+
+enum TestStatus {
+  DRAFT
+  PUBLISHED
+  SCHEDULED
+  CANCELLED
+
+  @@map("test_status")
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  TIMED_OUT
+
+  @@map("attempt_status")
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+
+  @@map("payment_status")
+}
