@@ -9,16 +9,16 @@ export async function middleware(request) {
     return NextResponse.redirect(new URL("/admin/dashboard", request.url));
   }
 
-  if (pathname.startsWith("/admin") && pathname !== "/admin/login") {
+  if (pathname.startsWith("/admin") && pathname !== "/login") {
     const token = request.cookies.get(COOKIE_NAME)?.value;
 
     if (!token) {
-      return NextResponse.redirect(new URL("/admin/login", request.url));
+      return NextResponse.redirect(new URL("/login", request.url));
     }
 
     const payload = await verifyToken(token);
     if (!payload) {
-      return NextResponse.redirect(new URL("/admin/login", request.url));
+      return NextResponse.redirect(new URL("/login", request.url));
     }
   }
 
