@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Sidebar from "@/components/admin/Sidebar";
+export const dynamic = "force-dynamic";
 
 function PageLoader() {
   return (
