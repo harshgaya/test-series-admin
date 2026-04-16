@@ -339,15 +339,17 @@ model CrashCourse {
 
 // ─── CRASH COURSE TESTS ───────────────────────────
 model CrashCourseTest {
-  id             Int @id @default(autoincrement())
-  crashCourseId  Int @map("crash_course_id")
-  testId         Int @map("test_id")
-  dayNumber      Int @map("day_number")
-  unlockAfterDay Int? @map("unlock_after_day")
-  orderIndex     Int @default(0) @map("order_index")
+  id            Int     @id @default(autoincrement())
+  crashCourseId Int     @map("crash_course_id")
+  testId        Int?    @map("test_id")
+  dayNumber     Int     @map("day_number")
+  topicName     String? @map("topic_name")
+  notesUrl      String? @map("notes_url")
+  videoUrl      String? @map("video_url")
+  orderIndex    Int     @default(0) @map("order_index")
 
   crashCourse CrashCourse @relation(fields: [crashCourseId], references: [id], onDelete: Cascade)
-  test        Test        @relation(fields: [testId],        references: [id])
+  test        Test?       @relation(fields: [testId], references: [id])
 
   @@unique([crashCourseId, dayNumber])
   @@map("crash_course_tests")
@@ -480,6 +482,7 @@ enum TestStatus {
   PUBLISHED
   SCHEDULED
   CANCELLED
+  CRASH_ONLY
 
   @@map("test_status")
 }

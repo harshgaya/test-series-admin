@@ -23,28 +23,102 @@ export default function MathEditor({
     document.head.appendChild(link);
   }, []);
 
-  // Render preview on every keystroke
   useEffect(() => {
     if (!value) {
       setPreview("");
       setError(false);
       return;
     }
+
     import("katex").then((katex) => {
       try {
-        const html = katex.default.renderToString(value, {
-          throwOnError: false,
-          displayMode: true,
-          output: "html",
-          trust: true,
-          macros: {
-            "\\ce": "\\text{#1}",
-          },
+        function escapeHtml(str) {
+          return str
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        }
+
+        function renderInline(math) {
+          return katex.default.renderToString(math.trim(), {
+            throwOnError: false,
+            displayMode: false,
+            output: "html",
+            strict: false,
+          });
+        }
+
+        function renderDisplay(math) {
+          return katex.default.renderToString(math.trim(), {
+            throwOnError: false,
+            displayMode: true,
+            output: "html",
+            strict: false,
+          });
+        }
+
+        const hasDollar = /\$/.test(value);
+        const hasCe = /\\ce\{/.test(value);
+        const hasLatex = /\\[a-zA-Z]/.test(value);
+
+        // Case 1 — no $ and no \ce but has latex commands
+        // e.g. "100 \text{ J}" or "\frac{1}{2}"
+        // render entire value as inline math
+        if (!hasDollar && !hasCe && hasLatex) {
+          try {
+            setPreview(renderInline(value));
+            setError(false);
+          } catch {
+            setPreview(escapeHtml(value));
+            setError(false);
+          }
+          return;
+        }
+
+        // Case 2 — no $ and no latex — plain text
+        if (!hasDollar && !hasCe && !hasLatex) {
+          setPreview(escapeHtml(value).replace(/\n/g, "<br/>"));
+          setError(false);
+          return;
+        }
+
+        // Case 3 — mixed content with $...$ and/or \ce{...}
+        let result = value;
+
+        // Replace $$...$$ — display math
+        result = result.replace(/\$\$([^$]+)\$\$/g, (_, math) => {
+          try {
+            return renderDisplay(math);
+          } catch {
+            return escapeHtml(math);
+          }
         });
-        setPreview(html);
+
+        // Replace $...$ — inline math
+        result = result.replace(/\$([^$\n]+)\$/g, (_, math) => {
+          try {
+            return renderInline(math);
+          } catch {
+            return escapeHtml(math);
+          }
+        });
+
+        // Replace \ce{...} — chemistry
+        result = result.replace(/\\ce\{([^}]+)\}/g, (_, chem) => {
+          try {
+            return renderInline(`\\mathrm{${chem}}`);
+          } catch {
+            return `<span style="font-family:monospace">${escapeHtml(chem)}</span>`;
+          }
+        });
+
+        // Preserve line breaks
+        result = result.replace(/\n/g, "<br/>");
+
+        setPreview(result);
         setError(false);
       } catch {
-        setPreview(value);
+        setPreview(`<span>${value}</span>`);
         setError(true);
       }
     });
@@ -63,7 +137,10 @@ export default function MathEditor({
       <textarea
         className="input-field resize-none font-mono text-sm"
         rows={rows}
-        placeholder={placeholder || "Type math here... e.g. x^2 + 2x = 0"}
+        placeholder={
+          placeholder ||
+          "Type here... wrap math in $...$ and chemistry in \\ce{...}"
+        }
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -78,7 +155,7 @@ export default function MathEditor({
             <p className="text-sm text-gray-600 font-mono">{value}</p>
           ) : (
             <div
-              className="text-gray-900 overflow-x-auto"
+              className="text-gray-900 text-sm leading-relaxed overflow-x-auto"
               dangerouslySetInnerHTML={{ __html: preview }}
             />
           )}
