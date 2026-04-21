@@ -11,6 +11,8 @@ import {
   MdInfo,
 } from "react-icons/md";
 
+const BATCH_SIZE = 20;
+
 export default function BulkImport({
   exams,
   subjects,
@@ -22,6 +24,7 @@ export default function BulkImport({
   const [parsing, setParsing] = useState(false);
   const [preview, setPreview] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState(null);
   const [result, setResult] = useState(null);
   const [mode, setMode] = useState("perrow");
 
@@ -31,6 +34,7 @@ export default function BulkImport({
     chapterId: "",
     topicId: "",
   });
+
   const filteredSubjects = mapping.examId
     ? subjects.filter((s) => s.examId === parseInt(mapping.examId))
     : subjects;
@@ -70,6 +74,7 @@ export default function BulkImport({
     setParsing(true);
     setPreview(null);
     setResult(null);
+    setProgress(null);
 
     try {
       const XLSX = await import("xlsx");
@@ -127,7 +132,7 @@ export default function BulkImport({
           examName = en;
           subjectName = sn;
           chapterName = cn;
-          topicRawName = tn; // raw topic name string — used for auto-create in API
+          topicRawName = tn;
         } else {
           examId = mapping.examId ? parseInt(mapping.examId) : null;
           subjectId = mapping.subjectId ? parseInt(mapping.subjectId) : null;
@@ -159,6 +164,7 @@ export default function BulkImport({
         const finalDiff = ["EASY", "MEDIUM", "HARD"].includes(difficulty)
           ? difficulty
           : "MEDIUM";
+
         const q = {
           rowNum,
           questionText,
@@ -177,7 +183,7 @@ export default function BulkImport({
           examName,
           subjectName,
           chapterName,
-          topicRawName, // passed to API for auto-create
+          topicRawName,
         };
 
         if (errors.length > 0) invalid.push({ ...q, errors });
@@ -208,50 +214,89 @@ export default function BulkImport({
     }
 
     setImporting(true);
-    try {
-      const questions = preview.valid.map((q) => ({
-        questionText: q.questionText,
-        questionType: "MCQ",
-        difficulty: q.difficulty,
-        examId: q.examId,
-        subjectId: q.subjectId,
-        chapterId: q.chapterId,
-        topicId: q.topicId || null,
-        topicName: q.topicRawName || null, // API uses this to auto-create topic if not found
-        solutionText: q.solution || null,
-        tags: q.tags
-          ? q.tags
-              .split(",")
-              .map((t) => t.trim())
-              .filter(Boolean)
-          : [],
-        isActive: true,
-        options: [
-          { label: "A", optionText: q.optionA, isCorrect: q.correct === "A" },
-          { label: "B", optionText: q.optionB, isCorrect: q.correct === "B" },
-          { label: "C", optionText: q.optionC, isCorrect: q.correct === "C" },
-          { label: "D", optionText: q.optionD, isCorrect: q.correct === "D" },
-        ],
-      }));
+    setResult(null);
 
-      const res = await fetch("/api/questions/bulk-import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questions }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        toast.error(data.error);
-        return;
+    // Build question payload
+    const allQuestions = preview.valid.map((q) => ({
+      questionText: q.questionText,
+      questionType: "MCQ",
+      difficulty: q.difficulty,
+      examId: q.examId,
+      subjectId: q.subjectId,
+      chapterId: q.chapterId,
+      topicId: q.topicId || null,
+      topicName: q.topicRawName || null,
+      solutionText: q.solution || null,
+      tags: q.tags
+        ? q.tags
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
+        : [],
+      isActive: true,
+      options: [
+        { label: "A", optionText: q.optionA, isCorrect: q.correct === "A" },
+        { label: "B", optionText: q.optionB, isCorrect: q.correct === "B" },
+        { label: "C", optionText: q.optionC, isCorrect: q.correct === "C" },
+        { label: "D", optionText: q.optionD, isCorrect: q.correct === "D" },
+      ],
+    }));
+
+    // Deduplicate within the file itself (same examId + questionText)
+    const seen = new Set();
+    const dedupedQuestions = allQuestions.filter((q) => {
+      const key = `${q.examId}_${q.questionText.trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const withinFileDupes = allQuestions.length - dedupedQuestions.length;
+
+    // Split into batches
+    const batches = [];
+    for (let i = 0; i < dedupedQuestions.length; i += BATCH_SIZE) {
+      batches.push(dedupedQuestions.slice(i, i + BATCH_SIZE));
+    }
+
+    const total = dedupedQuestions.length;
+    let done = 0,
+      imported = 0,
+      duplicates = withinFileDupes,
+      errors = 0;
+
+    setProgress({ total, done, imported, duplicates, errors });
+
+    try {
+      for (const batch of batches) {
+        const res = await fetch("/api/questions/bulk-import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ questions: batch }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          imported += data.data.imported;
+          duplicates += data.data.duplicates;
+          errors += data.data.errors || 0;
+        } else {
+          errors += batch.length;
+        }
+
+        done += batch.length;
+        setProgress({ total, done, imported, duplicates, errors });
       }
-      setResult(data.data);
+
+      setResult({ imported, duplicates, errors });
       setPreview(null);
-      toast.success(`${data.data.imported} questions imported!`);
+      toast.success(`${imported} questions imported successfully!`);
       if (onImported) onImported();
     } catch {
       toast.error("Import failed.");
     } finally {
       setImporting(false);
+      setProgress(null);
     }
   }
 
@@ -326,9 +371,11 @@ export default function BulkImport({
     });
   }
 
+  const pct = progress ? Math.round((progress.done / progress.total) * 100) : 0;
+
   return (
     <div className="space-y-4">
-      {/* Template */}
+      {/* Step 1 — Template */}
       <div
         className="flex items-center justify-between p-4 rounded-xl"
         style={{ background: "#F0FDFA", border: "1px solid #99F6E4" }}
@@ -349,14 +396,18 @@ export default function BulkImport({
         </button>
       </div>
 
-      {/* Mode */}
+      {/* Step 2 — Mode */}
       <div className="card p-4">
         <p className="text-sm font-semibold text-gray-900 mb-3">
           Step 2 — Choose Import Mode
         </p>
         <div className="grid grid-cols-2 gap-3">
           <label
-            className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${mode === "perrow" ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}
+            className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${
+              mode === "perrow"
+                ? "border-teal-500 bg-teal-50"
+                : "border-gray-200"
+            }`}
           >
             <input
               type="radio"
@@ -369,7 +420,9 @@ export default function BulkImport({
             />
             <div>
               <p
-                className={`text-sm font-semibold ${mode === "perrow" ? "text-teal-700" : "text-gray-700"}`}
+                className={`text-sm font-semibold ${
+                  mode === "perrow" ? "text-teal-700" : "text-gray-700"
+                }`}
               >
                 Per-Row (Recommended)
               </p>
@@ -380,7 +433,11 @@ export default function BulkImport({
             </div>
           </label>
           <label
-            className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${mode === "global" ? "border-teal-500 bg-teal-50" : "border-gray-200"}`}
+            className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${
+              mode === "global"
+                ? "border-teal-500 bg-teal-50"
+                : "border-gray-200"
+            }`}
           >
             <input
               type="radio"
@@ -393,7 +450,9 @@ export default function BulkImport({
             />
             <div>
               <p
-                className={`text-sm font-semibold ${mode === "global" ? "text-teal-700" : "text-gray-700"}`}
+                className={`text-sm font-semibold ${
+                  mode === "global" ? "text-teal-700" : "text-gray-700"
+                }`}
               >
                 Global Mapping
               </p>
@@ -520,7 +579,7 @@ export default function BulkImport({
         </div>
       )}
 
-      {/* Upload */}
+      {/* Step 3 — Upload */}
       <div>
         <p className="text-sm font-semibold text-gray-900 mb-2">
           Step 3 — Upload Filled Excel
@@ -534,7 +593,7 @@ export default function BulkImport({
         />
         <button
           onClick={() => inputRef.current?.click()}
-          disabled={parsing}
+          disabled={parsing || importing}
           className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-dashed transition-all"
           style={{ borderColor: "#0D9488", background: "#F0FDFA" }}
         >
@@ -549,7 +608,7 @@ export default function BulkImport({
       </div>
 
       {/* Preview */}
-      {preview && (
+      {preview && !importing && (
         <div className="card overflow-hidden">
           <div
             className="p-4 flex items-center justify-between"
@@ -661,29 +720,101 @@ export default function BulkImport({
               disabled={importing || preview.valid.length === 0}
               className="btn-primary"
             >
-              {importing
-                ? "Importing..."
-                : `Import ${preview.valid.length} Questions`}
+              {`Import ${preview.valid.length} Questions`}
             </button>
           </div>
         </div>
       )}
 
+      {/* Live Progress */}
+      {importing && progress && (
+        <div className="card p-4 space-y-3">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-gray-800">
+              Importing questions...
+            </p>
+            <p className="text-sm font-bold" style={{ color: "#0D9488" }}>
+              {pct}%
+            </p>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-full h-2.5 rounded-full bg-gray-100 overflow-hidden">
+            <div
+              className="h-2.5 rounded-full transition-all duration-300"
+              style={{
+                width: `${pct}%`,
+                background: "linear-gradient(90deg, #0D9488, #14B8A6)",
+              }}
+            />
+          </div>
+
+          {/* Counters */}
+          <div className="grid grid-cols-4 gap-2 text-center">
+            <div className="rounded-lg p-2" style={{ background: "#F0FDFA" }}>
+              <p className="text-lg font-bold" style={{ color: "#0D9488" }}>
+                {progress.done}
+              </p>
+              <p className="text-xs text-gray-500">Processed</p>
+            </div>
+            <div className="rounded-lg p-2" style={{ background: "#F0FDF4" }}>
+              <p className="text-lg font-bold text-green-600">
+                {progress.imported}
+              </p>
+              <p className="text-xs text-gray-500">Imported</p>
+            </div>
+            <div className="rounded-lg p-2" style={{ background: "#FFFBEB" }}>
+              <p className="text-lg font-bold text-amber-500">
+                {progress.duplicates}
+              </p>
+              <p className="text-xs text-gray-500">Duplicates</p>
+            </div>
+            <div className="rounded-lg p-2" style={{ background: "#FEF2F2" }}>
+              <p className="text-lg font-bold text-red-500">
+                {progress.errors}
+              </p>
+              <p className="text-xs text-gray-500">Errors</p>
+            </div>
+          </div>
+
+          {/* Remaining */}
+          <p className="text-xs text-gray-400 text-center">
+            {progress.done} of {progress.total} processed ·{" "}
+            {progress.total - progress.done} remaining
+          </p>
+        </div>
+      )}
+
       {/* Result */}
-      {result && (
+      {result && !importing && (
         <div
-          className="p-4 rounded-xl flex items-center gap-3"
+          className="card p-4"
           style={{ background: "#F0FDF4", border: "1px solid #BBF7D0" }}
         >
-          <MdCheckCircle style={{ color: "#16A34A", fontSize: 24 }} />
-          <div>
+          <div className="flex items-center gap-3 mb-3">
+            <MdCheckCircle style={{ color: "#16A34A", fontSize: 22 }} />
             <p className="text-sm font-semibold text-green-800">
               Import Complete!
             </p>
-            <p className="text-xs text-green-600 mt-0.5">
-              {result.imported} imported · {result.duplicates} duplicates
-              skipped · {result.errors || 0} errors
-            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-lg p-2 bg-white">
+              <p className="text-xl font-bold text-green-600">
+                {result.imported}
+              </p>
+              <p className="text-xs text-gray-500">Imported</p>
+            </div>
+            <div className="rounded-lg p-2 bg-white">
+              <p className="text-xl font-bold text-amber-500">
+                {result.duplicates}
+              </p>
+              <p className="text-xs text-gray-500">Skipped</p>
+            </div>
+            <div className="rounded-lg p-2 bg-white">
+              <p className="text-xl font-bold text-red-500">{result.errors}</p>
+              <p className="text-xs text-gray-500">Errors</p>
+            </div>
           </div>
         </div>
       )}
