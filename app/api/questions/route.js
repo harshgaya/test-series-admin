@@ -119,12 +119,41 @@ export async function POST(request) {
       integerAnswer,
       isActive,
       options,
+      tags,
+      skipDuplicateCheck,
     } = body;
 
     if (!questionText || !examId || !subjectId || !chapterId) {
       return errorResponse(
         "Question text, exam, subject and chapter are required",
       );
+    }
+
+    // Duplicate check — same question text in same exam
+    if (!skipDuplicateCheck) {
+      const existing = await prisma.question.findFirst({
+        where: {
+          questionText: { equals: questionText, mode: "insensitive" },
+          examId: parseInt(examId),
+        },
+        select: {
+          id: true,
+          chapter: { select: { name: true } },
+          subject: { select: { name: true } },
+        },
+      });
+
+      if (existing) {
+        return Response.json(
+          {
+            success: false,
+            duplicate: true,
+            existing,
+            error: "Similar question already exists",
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const question = await prisma.question.create({
@@ -143,6 +172,7 @@ export async function POST(request) {
         solutionVideoUrl,
         integerAnswer: integerAnswer || null,
         isActive: isActive !== false,
+        tags: Array.isArray(tags) ? tags : [],
         options: {
           create: (options || []).map((opt, i) => ({
             label: opt.label,

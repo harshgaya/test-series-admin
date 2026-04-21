@@ -25,7 +25,6 @@ export default function BulkPick({ examId, selectedQuestions, onAdd }) {
       const data = await res.json();
       if (data.success) {
         setGrouped(data.data);
-        // Expand first subject by default
         if (data.data.length > 0) {
           setExpanded({ [data.data[0].subjectId]: true });
         }
@@ -37,7 +36,7 @@ export default function BulkPick({ examId, selectedQuestions, onAdd }) {
     }
   }
 
-  async function handleBulkAdd(chapterId, count) {
+  async function handleBulkAdd(chapterId, count, subjectId) {
     const key = `${chapterId}-${count}`;
     setAdding(key);
     try {
@@ -49,6 +48,7 @@ export default function BulkPick({ examId, selectedQuestions, onAdd }) {
         body: JSON.stringify({
           sections: [
             {
+              subjectId,
               chapterIds: [chapterId],
               count,
               type: "BOTH",
@@ -121,7 +121,6 @@ export default function BulkPick({ examId, selectedQuestions, onAdd }) {
           className="rounded-lg overflow-hidden"
           style={{ border: "0.5px solid var(--color-border-tertiary)" }}
         >
-          {/* Subject header */}
           <button
             onClick={() => toggleSubject(subject.subjectId)}
             className="w-full flex items-center justify-between px-3 py-2.5 transition-colors"
@@ -156,7 +155,6 @@ export default function BulkPick({ examId, selectedQuestions, onAdd }) {
             </div>
           </button>
 
-          {/* Chapters */}
           {expanded[subject.subjectId] && (
             <div
               className="divide-y"
@@ -176,14 +174,19 @@ export default function BulkPick({ examId, selectedQuestions, onAdd }) {
                     </p>
                   </div>
 
-                  {/* Quick add buttons */}
                   <div className="flex items-center gap-1 flex-shrink-0">
                     {[10, 20, 30].map(
                       (n) =>
                         n <= chapter.count && (
                           <button
                             key={n}
-                            onClick={() => handleBulkAdd(chapter.chapterId, n)}
+                            onClick={() =>
+                              handleBulkAdd(
+                                chapter.chapterId,
+                                n,
+                                subject.subjectId,
+                              )
+                            }
                             disabled={adding === `${chapter.chapterId}-${n}`}
                             className="text-xs px-2 py-1 rounded-md font-medium transition-all"
                             style={{
@@ -202,7 +205,6 @@ export default function BulkPick({ examId, selectedQuestions, onAdd }) {
                         ),
                     )}
 
-                    {/* Custom count */}
                     <div className="flex items-center gap-1">
                       <input
                         type="number"
@@ -232,7 +234,11 @@ export default function BulkPick({ examId, selectedQuestions, onAdd }) {
                             );
                             return;
                           }
-                          handleBulkAdd(chapter.chapterId, n);
+                          handleBulkAdd(
+                            chapter.chapterId,
+                            n,
+                            subject.subjectId,
+                          );
                         }}
                         className="p-1.5 rounded-md transition-all"
                         style={{ background: "#0D9488", color: "white" }}

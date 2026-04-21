@@ -70,6 +70,7 @@ export async function POST(request) {
       status,
       scheduledAt,
       questionIds,
+      endedAt,
     } = body;
 
     if (!title || !examId || !testType) {
@@ -99,6 +100,7 @@ export async function POST(request) {
         showLeaderboard: showLeaderboard !== false,
         status: status || "DRAFT",
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+        endedAt: endedAt ? new Date(endedAt) : null,
         testQuestions: {
           create: (questionIds || []).map((qId, i) => ({
             questionId: parseInt(qId),

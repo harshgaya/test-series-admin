@@ -136,6 +136,7 @@ model Question {
   questionImageUrl   String?      @map("question_image_url")
   questionType       QuestionType @default(MCQ) @map("question_type")
   difficulty         Difficulty   @default(MEDIUM)
+  tags               String[]     @default([])
   solutionText       String?      @map("solution_text")
   solutionImageUrl   String?      @map("solution_image_url")
   solutionPdfUrl     String?      @map("solution_pdf_url")
@@ -502,4 +503,13 @@ enum PaymentStatus {
   REFUNDED
 
   @@map("payment_status")
+}
+datasource oldDb {
+  provider = "postgresql"
+  url      = env("OLD_DATABASE_URL")
+}
+
+datasource newDb {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
