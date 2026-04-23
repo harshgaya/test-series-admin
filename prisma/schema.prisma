@@ -504,10 +504,7 @@ enum PaymentStatus {
 
   @@map("payment_status")
 }
-datasource oldDb {
-  provider = "postgresql"
-  url      = env("OLD_DATABASE_URL")
-}
+
 
 datasource newDb {
   provider = "postgresql"
