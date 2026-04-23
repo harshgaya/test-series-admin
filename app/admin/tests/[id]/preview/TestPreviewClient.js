@@ -512,7 +512,7 @@ export default function TestPreviewClient({ test }) {
         </div>
 
         {/* Palette sidebar */}
-        {showPalette && (
+        {/* {showPalette && (
           <div
             className="w-72 bg-white overflow-y-auto flex-shrink-0"
             style={{ borderLeft: "1px solid #E5E7EB" }}
@@ -604,7 +604,94 @@ export default function TestPreviewClient({ test }) {
               })}
             </div>
           </div>
-        )}
+        )} */}
+        <div
+          className="w-72 bg-white overflow-y-auto flex-shrink-0"
+          style={{ borderLeft: "1px solid #E5E7EB" }}
+        >
+          <div
+            className="p-4 sticky top-0 bg-white"
+            style={{ borderBottom: "1px solid #E5E7EB" }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-bold text-gray-900">
+                Question Palette
+              </p>
+              <button
+                onClick={() => setShowPalette(false)}
+                className="p-1 text-gray-400 hover:text-gray-600"
+              >
+                <MdClose className="text-lg" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 text-xs">
+              {[
+                { status: "answered", label: "Answered" },
+                { status: "marked", label: "Marked" },
+                { status: "visited", label: "Not Answered" },
+                { status: "not-visited", label: "Not Visited" },
+              ].map(({ status, label }) => {
+                const c = getPaletteColor(status);
+                return (
+                  <div key={status} className="flex items-center gap-1.5">
+                    <div
+                      className="w-5 h-5 rounded flex-shrink-0"
+                      style={{
+                        background: c.bg,
+                        border: `1px solid ${c.border || c.bg}`,
+                      }}
+                    />
+                    <span className="text-gray-500">{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div
+            className="px-4 py-3 grid grid-cols-3 gap-2 text-center"
+            style={{ borderBottom: "1px solid #E5E7EB" }}
+          >
+            <div>
+              <p className="text-lg font-bold text-green-600">
+                {answeredCount}
+              </p>
+              <p className="text-xs text-gray-400">Answered</p>
+            </div>
+            <div>
+              <p className="text-lg font-bold text-purple-600">{markedCount}</p>
+              <p className="text-xs text-gray-400">Marked</p>
+            </div>
+            <div>
+              <p className="text-lg font-bold text-gray-500">
+                {total - answeredCount}
+              </p>
+              <p className="text-xs text-gray-400">Left</p>
+            </div>
+          </div>
+          <div className="p-4 grid grid-cols-5 gap-2">
+            {questions.map((_, i) => {
+              const status = getStatus(i);
+              const c = getPaletteColor(status);
+              return (
+                <button
+                  key={i}
+                  onClick={() => goTo(i)}
+                  className="w-10 h-10 rounded-lg text-xs font-bold transition-all"
+                  style={{
+                    background: i === current ? "#0D9488" : c.bg,
+                    color: i === current ? "white" : c.text,
+                    border:
+                      i === current ? "none" : `1px solid ${c.border || c.bg}`,
+                    outline: i === current ? "2px solid #0D9488" : "none",
+                    outlineOffset: i === current ? "2px" : "0",
+                  }}
+                >
+                  {i + 1}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* Submit confirmation */}

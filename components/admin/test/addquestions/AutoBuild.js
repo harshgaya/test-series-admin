@@ -249,6 +249,7 @@ export default function AutoBuild({
                 className="input-field py-1.5 text-sm"
                 value={section.count}
                 min={1}
+                onWheel={(e) => e.target.blur()}
                 onChange={(e) =>
                   updateSection(i, "count", parseInt(e.target.value) || 1)
                 }
