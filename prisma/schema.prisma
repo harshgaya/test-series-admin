@@ -504,9 +504,3 @@ enum PaymentStatus {
 
   @@map("payment_status")
 }
-
-
-datasource newDb {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
