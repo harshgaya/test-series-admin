@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import {
   MdAdd,
@@ -26,6 +27,7 @@ const DIFF_COLORS = { EASY: "green", MEDIUM: "yellow", HARD: "red" };
 
 export default function QuestionsClient({ filters }) {
   const { exams, subjects, chapters, topics } = filters;
+  const router = useRouter();
 
   const [questions, setQuestions] = useState([]);
   const [total, setTotal] = useState(0);
@@ -44,6 +46,7 @@ export default function QuestionsClient({ filters }) {
   const [filterType, setFilterType] = useState("");
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const [gotoId, setGotoId] = useState("");
 
   const filteredSubjects = filterExam
     ? subjects.filter((s) => s.examId === parseInt(filterExam))
@@ -84,6 +87,13 @@ export default function QuestionsClient({ filters }) {
     e.preventDefault();
     setSearch(searchInput);
     setPage(1);
+  }
+
+  function handleGoto(e) {
+    e.preventDefault();
+    const id = gotoId.trim();
+    if (!id) return;
+    router.push(`/admin/questions/${id}`);
   }
 
   async function handleDelete() {
@@ -250,17 +260,35 @@ export default function QuestionsClient({ filters }) {
             ))}
           </select>
         </div>
-        <form onSubmit={handleSearch} className="flex items-center gap-2 mt-3">
-          <input
-            className="input-field pl-3 w-56 py-1.5"
-            placeholder="Search questions..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-          <button type="submit" className="btn-primary py-1.5">
-            Search
-          </button>
-        </form>
+        <div className="flex items-center gap-4 mt-3 flex-wrap">
+          <form onSubmit={handleSearch} className="flex items-center gap-2">
+            <input
+              className="input-field pl-3 w-56 py-1.5"
+              placeholder="Search questions..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+            <button type="submit" className="btn-primary py-1.5">
+              Search
+            </button>
+          </form>
+
+          <form onSubmit={handleGoto} className="flex items-center gap-2">
+            <input
+              type="number"
+              className="input-field pl-3 w-36 py-1.5"
+              placeholder="Go to ID..."
+              value={gotoId}
+              onChange={(e) => setGotoId(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="btn-secondary py-1.5 whitespace-nowrap"
+            >
+              Go
+            </button>
+          </form>
+        </div>
       </div>
 
       {/* Table */}
