@@ -106,7 +106,7 @@ JSON format:
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 4000,
         system: SYSTEM_PROMPT,
         messages: [
@@ -140,7 +140,7 @@ JSON format:
       // ← add
       await logApiUsage({
         route: "ocr",
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         inputTokens: data.usage.input_tokens || 0,
         outputTokens: data.usage.output_tokens || 0,
       });
