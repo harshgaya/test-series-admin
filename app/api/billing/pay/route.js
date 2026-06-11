@@ -3,10 +3,14 @@ import { successResponse, errorResponse } from "@/lib/api";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+export const dynamic = "force-dynamic";
+
+function getRazorpay() {
+  return new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+  });
+}
 
 // POST /api/billing/pay - create Razorpay order for a bill
 export async function POST(request) {
@@ -18,6 +22,8 @@ export async function POST(request) {
     });
     if (!bill) return errorResponse("Bill not found", 404);
     if (bill.status === "paid") return errorResponse("Already paid");
+
+    const razorpay = getRazorpay();
 
     // Create Razorpay order (amount in paise)
     const order = await razorpay.orders.create({
