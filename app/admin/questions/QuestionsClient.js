@@ -11,6 +11,7 @@ import {
   MdVisibility,
   MdUpload,
   MdFindInPage,
+  MdWarning,
 } from "react-icons/md";
 import Badge from "@/components/ui/Badge";
 import AlertDialog from "@/components/ui/AlertDialog";
@@ -18,6 +19,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import Pagination from "@/components/ui/Pagination";
 import Modal from "@/components/ui/Modal";
 import BulkImport from "@/components/admin/question/BulkImport";
+import MathDisplay from "@/components/admin/question/MathDisplay";
 import { DIFFICULTIES, QUESTION_TYPES } from "@/lib/constants";
 
 const DIFF_COLORS = { EASY: "green", MEDIUM: "yellow", HARD: "red" };
@@ -105,20 +107,23 @@ export default function QuestionsClient({ filters }) {
     }
   }
 
-  function truncate(text, len = 80) {
-    if (!text) return "";
-    const plain = text
-      .replace(/\$[^$]*\$/g, "[math]")
-      .replace(/\\\w+\{[^}]*\}/g, "[math]");
-    return plain.length > len ? plain.substring(0, len) + "..." : plain;
+  // A question is mismatched if its subjectId differs from the subject
+  // that actually owns its chapter. Needs chapter.subjectId from the API.
+  function isMismatched(q) {
+    const chapterSubjectId = q.chapter?.subjectId;
+    if (chapterSubjectId == null || q.subjectId == null) return false;
+    return q.subjectId !== chapterSubjectId;
   }
 
   const COLS = [
     "#",
     "Question",
     "Exam",
+    "Ex ID",
     "Subject",
+    "Sub ID",
     "Chapter",
+    "Ch ID",
     "Topic",
     "Type",
     "Difficulty",
@@ -138,6 +143,12 @@ export default function QuestionsClient({ filters }) {
           <p className="page-subtitle">All questions in the question bank</p>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            href="/admin/questions/validate"
+            className="btn-secondary flex items-center gap-2"
+          >
+            <MdFindInPage className="text-lg" /> Validate AI-Checked
+          </Link>
           <Link
             href="/admin/questions/duplicates"
             className="btn-secondary flex items-center gap-2"
@@ -285,102 +296,134 @@ export default function QuestionsClient({ filters }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {questions.map((q, i) => (
-                    <tr key={q.id} className="table-row-hover">
-                      <td className="px-4 py-3 text-gray-400 text-xs">
-                        {(page - 1) * 20 + i + 1}
-                      </td>
-                      <td className="px-4 py-3 max-w-[200px]">
-                        <p className="text-gray-900 text-sm leading-snug">
-                          {truncate(q.questionText)}
-                        </p>
-                        {q.questionImageUrl && (
-                          <span className="text-xs text-blue-500 mt-0.5">
-                            📷 Has image
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
-                        {q.exam?.name || "—"}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
-                        {q.subject?.name || "—"}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">
-                        {q.chapter?.name || "—"}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
-                        {q.topic?.name || "—"}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <Badge
-                          label={
-                            QUESTION_TYPES.find(
-                              (t) => t.value === q.questionType,
-                            )?.label || q.questionType
-                          }
-                          color="blue"
-                        />
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <Badge
-                          label={q.difficulty}
-                          color={DIFF_COLORS[q.difficulty] || "gray"}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        {q.tags?.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {q.tags.slice(0, 2).map((tag) => (
-                              <span
-                                key={tag}
-                                className="text-xs px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-700"
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                            {q.tags.length > 2 && (
-                              <span className="text-xs text-gray-400">
-                                +{q.tags.length - 2}
-                              </span>
-                            )}
+                  {questions.map((q, i) => {
+                    const mismatch = isMismatched(q);
+                    return (
+                      <tr
+                        key={q.id}
+                        className="table-row-hover"
+                        style={mismatch ? { background: "#FEF2F2" } : undefined}
+                      >
+                        <td className="px-4 py-3 text-gray-400 text-xs">
+                          {(page - 1) * 20 + i + 1}
+                        </td>
+                        <td
+                          className="px-4 py-3"
+                          style={{ maxWidth: 320, minWidth: 200 }}
+                        >
+                          {mismatch && (
+                            <span
+                              className="inline-flex items-center gap-1 text-xs font-semibold px-1.5 py-0.5 rounded-full mb-1"
+                              style={{
+                                background: "#FEE2E2",
+                                color: "#DC2626",
+                              }}
+                              title="Question subject does not match its chapter's subject"
+                            >
+                              <MdWarning style={{ fontSize: 12 }} /> Mismatch
+                            </span>
+                          )}
+                          <MathDisplay
+                            text={q.questionText}
+                            className="text-gray-900 text-sm leading-relaxed"
+                          />
+                          {q.questionImageUrl && (
+                            <span className="text-xs text-blue-500 mt-1 block">
+                              📷 Has image
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
+                          {q.exam?.name || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-400 font-mono whitespace-nowrap">
+                          {q.examId ?? "—"}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
+                          {q.subject?.name || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-400 font-mono whitespace-nowrap">
+                          {q.subjectId ?? "—"}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">
+                          {q.chapter?.name || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-400 font-mono whitespace-nowrap">
+                          {q.chapterId ?? "—"}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
+                          {q.topic?.name || "—"}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <Badge
+                            label={
+                              QUESTION_TYPES.find(
+                                (t) => t.value === q.questionType,
+                              )?.label || q.questionType
+                            }
+                            color="blue"
+                          />
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <Badge
+                            label={q.difficulty}
+                            color={DIFF_COLORS[q.difficulty] || "gray"}
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          {q.tags?.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {q.tags.slice(0, 2).map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="text-xs px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-700"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                              {q.tags.length > 2 && (
+                                <span className="text-xs text-gray-400">
+                                  +{q.tags.length - 2}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-300">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
+                          {q.usageCount ?? 0} tests
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <Badge
+                            label={q.isActive ? "Active" : "Inactive"}
+                            color={q.isActive ? "green" : "gray"}
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
+                            <Link
+                              href={`/admin/questions/${q.id}`}
+                              className="p-1.5 text-gray-400 hover:text-blue-600 transition-colors"
+                              title="Edit"
+                            >
+                              <MdEdit className="text-lg" />
+                            </Link>
+                            <button
+                              onClick={() => {
+                                setSelected(q);
+                                setShowDelete(true);
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
+                              title="Delete"
+                            >
+                              <MdDelete className="text-lg" />
+                            </button>
                           </div>
-                        ) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                        {q.usageCount ?? 0} tests
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <Badge
-                          label={q.isActive ? "Active" : "Inactive"}
-                          color={q.isActive ? "green" : "gray"}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
-                          <Link
-                            href={`/admin/questions/${q.id}`}
-                            className="p-1.5 text-gray-400 hover:text-blue-600 transition-colors"
-                            title="Edit"
-                          >
-                            <MdEdit className="text-lg" />
-                          </Link>
-                          <button
-                            onClick={() => {
-                              setSelected(q);
-                              setShowDelete(true);
-                            }}
-                            className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
-                            title="Delete"
-                          >
-                            <MdDelete className="text-lg" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

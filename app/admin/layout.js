@@ -1,5 +1,7 @@
 import { Suspense } from "react";
 import Sidebar from "@/components/admin/Sidebar";
+import BillingBanner from "@/components/admin/billing/BillingBanner";
+
 export const dynamic = "force-dynamic";
 
 function PageLoader() {
@@ -17,9 +19,13 @@ export default function AdminLayout({ children }) {
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto">
-        <Suspense fallback={<PageLoader />}>{children}</Suspense>
-      </main>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Sticky billing banner - shows on every admin page */}
+        <BillingBanner />
+        <main className="flex-1 overflow-y-auto">
+          <Suspense fallback={<PageLoader />}>{children}</Suspense>
+        </main>
+      </div>
     </div>
   );
 }

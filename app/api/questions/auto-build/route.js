@@ -3,7 +3,11 @@ import { successResponse, errorResponse } from "@/lib/api";
 
 export async function POST(request) {
   try {
-    const { sections, excludeIds = [] } = await request.json();
+    const {
+      sections,
+      excludeIds = [],
+      extraExamIds = [],
+    } = await request.json();
 
     if (!sections || sections.length === 0) {
       return errorResponse("At least one section is required");
@@ -16,42 +20,99 @@ export async function POST(request) {
 
       if (!subjectId || !count) continue;
 
-      // Build where clause
-      const where = {
-        subjectId: parseInt(subjectId),
+      // Resolve subject IDs (include same-named subjects from extra exams)
+      let subjectIds = [parseInt(subjectId)];
+
+      if (extraExamIds.length > 0) {
+        const primarySubject = await prisma.subject.findUnique({
+          where: { id: parseInt(subjectId) },
+          select: { name: true },
+        });
+
+        if (primarySubject) {
+          const matchingSubjects = await prisma.subject.findMany({
+            where: {
+              name: { equals: primarySubject.name.trim(), mode: "insensitive" },
+              examId: { in: extraExamIds.map(Number) },
+            },
+            select: { id: true },
+          });
+          subjectIds = [
+            parseInt(subjectId),
+            ...matchingSubjects.map((s) => s.id),
+          ];
+        }
+      }
+
+      // Base where clause (no difficulty here)
+      const baseWhere = {
+        subjectId: subjectIds.length === 1 ? subjectIds[0] : { in: subjectIds },
         isActive: true,
-        id: { notIn: [...excludeIds, ...allQuestions.map((q) => q.id)] },
       };
 
       if (chapterIds?.length > 0) {
-        where.chapterId = { in: chapterIds.map(Number) };
+        baseWhere.chapterId = { in: chapterIds.map(Number) };
       }
 
       if (type && type !== "BOTH") {
-        where.questionType = type;
+        baseWhere.questionType = type;
       }
 
-      // If difficulty percentages provided — pick per difficulty
+      const excludeNow = () => [
+        ...excludeIds,
+        ...allQuestions.map((q) => q.id),
+      ];
+
       const hasDifficultyRules =
         difficulty &&
         (difficulty.EASY > 0 || difficulty.MEDIUM > 0 || difficulty.HARD > 0);
+
+      let picked = [];
 
       if (hasDifficultyRules) {
         const easyCount = Math.round(((difficulty.EASY || 0) / 100) * count);
         const hardCount = Math.round(((difficulty.HARD || 0) / 100) * count);
         const medCount = count - easyCount - hardCount;
 
-        const picks = await Promise.all([
-          pickRandom({ ...where, difficulty: "EASY" }, easyCount),
-          pickRandom({ ...where, difficulty: "MEDIUM" }, medCount),
-          pickRandom({ ...where, difficulty: "HARD" }, hardCount),
-        ]);
+        // Pick per difficulty (exclude already-selected)
+        const easyPicks = await pickRandom(
+          { ...baseWhere, difficulty: "EASY", id: { notIn: excludeNow() } },
+          easyCount,
+        );
+        picked.push(...easyPicks);
+        allQuestions.push(...easyPicks);
 
-        allQuestions.push(...picks.flat());
+        const medPicks = await pickRandom(
+          { ...baseWhere, difficulty: "MEDIUM", id: { notIn: excludeNow() } },
+          medCount,
+        );
+        picked.push(...medPicks);
+        allQuestions.push(...medPicks);
+
+        const hardPicks = await pickRandom(
+          { ...baseWhere, difficulty: "HARD", id: { notIn: excludeNow() } },
+          hardCount,
+        );
+        picked.push(...hardPicks);
+        allQuestions.push(...hardPicks);
+
+        // CRITICAL: fill shortfall from ANY difficulty
+        // Handles the common case where all questions are one difficulty
+        const shortfall = count - picked.length;
+        if (shortfall > 0) {
+          const fill = await pickRandom(
+            { ...baseWhere, id: { notIn: excludeNow() } },
+            shortfall,
+          );
+          picked.push(...fill);
+          allQuestions.push(...fill);
+        }
       } else {
-        // Mixed difficulty — just pick randomly
-        const questions = await pickRandom(where, count);
-        allQuestions.push(...questions);
+        picked = await pickRandom(
+          { ...baseWhere, id: { notIn: excludeNow() } },
+          count,
+        );
+        allQuestions.push(...picked);
       }
     }
 
@@ -65,7 +126,6 @@ export async function POST(request) {
 async function pickRandom(where, count) {
   if (count <= 0) return [];
 
-  // Get all matching question IDs first
   const ids = await prisma.question.findMany({
     where,
     select: { id: true },
@@ -73,11 +133,10 @@ async function pickRandom(where, count) {
 
   if (ids.length === 0) return [];
 
-  // Shuffle and pick
+  // Shuffle and take `count`
   const shuffled = ids.sort(() => Math.random() - 0.5).slice(0, count);
   const pickedIds = shuffled.map((q) => q.id);
 
-  // Fetch full question data
   const questions = await prisma.question.findMany({
     where: { id: { in: pickedIds } },
     include: {

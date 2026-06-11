@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
+import { MdAutoFixHigh } from "react-icons/md";
 
 import ClassificationFields from "./question/ClassificationFields";
 import MathEditor from "./question/MathEditor";
@@ -11,6 +12,7 @@ import OptionsEditor, { getEmptyOptions } from "./question/OptionsEditor";
 import SolutionFields from "./question/SolutionFields";
 import FileUpload from "./question/FileUpload";
 import TagInput from "./question/TagInput";
+import OcrUpload from "./question/ocrUpload";
 
 export default function QuestionForm({
   question,
@@ -44,13 +46,146 @@ export default function QuestionForm({
     question?.options || getEmptyOptions(),
   );
   const [loading, setLoading] = useState(false);
-
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiGenerated, setAiGenerated] = useState(false); // true after AI has run once
   const [duplicate, setDuplicate] = useState(null);
   const [showDupWarning, setShowDupWarning] = useState(false);
+  const [savedCount, setSavedCount] = useState(0);
 
   const [filterExam, setFilterExam] = useState(String(question?.examId || ""));
   const [filterSub, setFilterSub] = useState(String(question?.subjectId || ""));
   const [filterCh, setFilterCh] = useState(String(question?.chapterId || ""));
+
+  function resetFormForNext() {
+    setAiGenerated(false);
+    setForm({
+      questionText: "",
+      questionImageUrl: "",
+      questionType: "MCQ",
+      difficulty: "MEDIUM",
+      examId: form.examId,
+      subjectId: form.subjectId,
+      chapterId: form.chapterId,
+      topicId: form.topicId,
+      solutionText: "",
+      solutionImageUrl: "",
+      solutionAudioUrl: "",
+      solutionVideoUrl: "",
+      integerAnswer: "",
+      isActive: true,
+      tags: [],
+    });
+    setOptions(getEmptyOptions());
+    setDuplicate(null);
+    setShowDupWarning(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // Called when teacher picks a question from OCR modal
+  function handleOcrApply(extracted) {
+    if (extracted.questionText) {
+      const solutionText = (extracted.solutionText || "").replace(/\\n/g, "\n");
+      setForm((f) => ({
+        ...f,
+        questionText: extracted.questionText,
+        questionType: extracted.questionType || f.questionType,
+        difficulty: extracted.difficulty || f.difficulty,
+        solutionText,
+        integerAnswer:
+          extracted.questionType === "INTEGER"
+            ? extracted.correctAnswer || ""
+            : f.integerAnswer,
+      }));
+    }
+    if (extracted.options?.length > 0) {
+      setOptions(
+        extracted.options.map((o, i) => ({
+          id: i + 1,
+          label: o.label || ["A", "B", "C", "D"][i],
+          optionText: o.optionText || "",
+          isCorrect: o.isCorrect || false,
+          orderIndex: i,
+        })),
+      );
+    }
+  }
+
+  // AI Assist - smart mode detection
+  // If options are empty → generate everything
+  // If options are filled → just convert to LaTeX
+  async function handleAiAssist() {
+    if (!form.questionText.trim()) {
+      toast.error("Type a question first");
+      return;
+    }
+
+    const hasOptions = options.some((o) => o.optionText.trim());
+    const mode = hasOptions ? "convert" : "generate";
+
+    // Get subject/chapter names for context
+    const examName =
+      exams.find((e) => e.id === parseInt(form.examId))?.name || "";
+    const subjectName =
+      subjects.find((s) => s.id === parseInt(form.subjectId))?.name || "";
+    const chapterName =
+      chapters.find((c) => c.id === parseInt(form.chapterId))?.name || "";
+
+    setAiLoading(true);
+    try {
+      const res = await fetch("/api/questions/ai-generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          questionText: form.questionText,
+          exam: examName,
+          subject: subjectName,
+          chapter: chapterName,
+          hasOptions,
+          existingOptions: hasOptions ? options : [],
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        toast.error(data.error || "AI generation failed");
+        return;
+      }
+
+      const result = data.data;
+
+      // Apply AI result to form
+      setForm((f) => ({
+        ...f,
+        questionText: result.questionText || f.questionText,
+        solutionText: result.solutionText
+          ? result.solutionText.replace(/\\n/g, "\n")
+          : f.solutionText,
+        difficulty: result.difficulty || f.difficulty,
+      }));
+
+      if (result.options?.length > 0) {
+        setOptions(
+          result.options.map((o, i) => ({
+            id: i + 1,
+            label: o.label || ["A", "B", "C", "D"][i],
+            optionText: o.optionText || "",
+            isCorrect: o.isCorrect || false,
+            orderIndex: i,
+          })),
+        );
+      }
+
+      if (mode === "generate") {
+        toast.success("Question, options and solution generated!");
+      } else {
+        toast.success("Converted to LaTeX!");
+      }
+    } catch (err) {
+      toast.error("AI failed: " + err.message);
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   async function handleSubmit(skipDuplicateCheck = false) {
     if (!form.questionText.trim()) {
@@ -110,8 +245,14 @@ export default function QuestionForm({
         toast.error(data.error);
         return;
       }
-      toast.success(isEdit ? "Question updated!" : "Question created!");
-      router.push("/admin/questions");
+      if (isEdit) {
+        toast.success("Question updated!");
+        router.push("/admin/questions");
+        return;
+      }
+      setSavedCount((c) => c + 1);
+      toast.success("Question saved! Fill the next one.");
+      resetFormForNext();
     } catch {
       toast.error("Something went wrong");
     } finally {
@@ -119,8 +260,38 @@ export default function QuestionForm({
     }
   }
 
+  // Smart label:
+  // - Not yet run → "AI Generate"
+  // - Already generated + options filled → "Convert to LaTeX"
+  // - Question cleared → back to "AI Generate"
+  const hasOptions = options.some((o) => o.optionText.trim());
+  const aiButtonLabel = aiLoading
+    ? "Generating..."
+    : aiGenerated && hasOptions && form.questionText.trim()
+      ? "✨ Convert to LaTeX"
+      : "✨ AI Generate";
+
   return (
     <div className="max-w-4xl space-y-5">
+      {/* OCR banner - new question only */}
+      {!isEdit && (
+        <div
+          className="flex items-center justify-between p-4 rounded-xl"
+          style={{ background: "#EFF6FF", border: "0.5px solid #BFDBFE" }}
+        >
+          <div>
+            <p className="text-sm font-semibold text-blue-800">
+              Have questions on paper or in a textbook?
+            </p>
+            <p className="text-xs text-blue-600 mt-0.5">
+              Upload one photo - AI extracts all questions. Go through them one
+              by one, fill form and save each.
+            </p>
+          </div>
+          <OcrUpload onApply={handleOcrApply} />
+        </div>
+      )}
+
       {/* Duplicate warning */}
       {showDupWarning && duplicate && (
         <div
@@ -182,15 +353,52 @@ export default function QuestionForm({
         setFilterCh={setFilterCh}
       />
 
+      {/* Question card with AI Assist button */}
       <div className="card p-6">
-        <h2 className="font-semibold text-gray-900 mb-4">Question</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-gray-900">Question</h2>
+          {/* AI Assist button */}
+          <button
+            type="button"
+            onClick={handleAiAssist}
+            disabled={aiLoading || !form.questionText.trim()}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
+            style={{
+              background: aiLoading ? "#F5F3FF" : "#EDE9FE",
+              color: "#6D28D9",
+              border: "0.5px solid #C4B5FD",
+            }}
+          >
+            {aiLoading ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-purple-300 border-t-purple-600 rounded-full animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <MdAutoFixHigh style={{ fontSize: 16 }} />
+                {aiButtonLabel}
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Helper text explaining AI button */}
+        {!isEdit && (
+          <p className="text-xs text-gray-400 mb-3 -mt-2">
+            {aiGenerated && hasOptions && form.questionText.trim()
+              ? "AI already generated — click again to re-convert to LaTeX"
+              : "Type question in plain text, click AI Generate to create options and solution automatically"}
+          </p>
+        )}
+
         <div className="space-y-4">
           <MathEditor
             label="Question Text *"
             hint="(use virtual keyboard or type shortcuts like x^2)"
             value={form.questionText}
             onChange={(val) => setForm((f) => ({ ...f, questionText: val }))}
-            placeholder="Type question here..."
+            placeholder="Type in plain text, e.g: find the work done when force 10N moves body 5m at 60 degrees..."
             rows={3}
           />
           <FileUpload
@@ -233,7 +441,6 @@ export default function QuestionForm({
 
       <SolutionFields form={form} setForm={setForm} />
 
-      {/* Tags */}
       <div className="card p-6">
         <h2 className="font-semibold text-gray-900 mb-1">Tags</h2>
         <p className="text-xs text-gray-400 mb-3">
@@ -265,12 +472,20 @@ export default function QuestionForm({
             </div>
           </label>
           <div className="flex items-center gap-3">
+            {savedCount > 0 && (
+              <span
+                className="text-xs font-semibold px-2.5 py-1 rounded-full"
+                style={{ background: "#DCFCE7", color: "#15803D" }}
+              >
+                {savedCount} saved
+              </span>
+            )}
             <button
               type="button"
               onClick={() => router.push("/admin/questions")}
               className="btn-secondary"
             >
-              Cancel
+              {savedCount > 0 ? "Done" : "Cancel"}
             </button>
             <button
               type="button"
@@ -282,7 +497,7 @@ export default function QuestionForm({
                 ? "Saving..."
                 : isEdit
                   ? "Update Question"
-                  : "Save Question"}
+                  : "Save & Next"}
             </button>
           </div>
         </div>

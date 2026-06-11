@@ -1,48 +1,100 @@
 import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api";
 
-// Similarity ratio between two strings (0 to 1)
-function similarity(a, b) {
-  const s1 = a.toLowerCase().trim();
-  const s2 = b.toLowerCase().trim();
-  if (s1 === s2) return 1;
-
-  const longer = s1.length > s2.length ? s1 : s2;
-  const shorter = s1.length > s2.length ? s2 : s1;
-  if (longer.length === 0) return 1;
-
-  // Levenshtein distance
-  const costs = [];
-  for (let i = 0; i <= longer.length; i++) {
-    let lastValue = i;
-    for (let j = 0; j <= shorter.length; j++) {
-      if (i === 0) {
-        costs[j] = j;
-      } else if (j > 0) {
-        let newValue = costs[j - 1];
-        if (longer[i - 1] !== shorter[j - 1]) {
-          newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
-        }
-        costs[j - 1] = lastValue;
-        lastValue = newValue;
-      }
-    }
-    if (i > 0) costs[shorter.length] = lastValue;
-  }
-  return (longer.length - costs[shorter.length]) / longer.length;
-}
-
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const threshold = parseFloat(searchParams.get("threshold") || "0.85");
+    const threshold = parseFloat(searchParams.get("threshold") || "0.95");
     const examId = searchParams.get("examId");
+    const sim = Math.min(0.99, Math.max(0.7, threshold));
+    const examClause = examId ? `AND a.exam_id = ${parseInt(examId)}` : "";
 
-    const where = {};
-    if (examId) where.examId = parseInt(examId);
+    // Set threshold and find all pairs in one query
+    // Returns ALL pairs - client handles pagination (instant navigation)
+    const rawPairs = await prisma.$queryRawUnsafe(`
+      SELECT
+        a.id   AS id_a,
+        b.id   AS id_b,
+        ROUND(similarity(a.question_text_clean, b.question_text_clean)::numeric, 2) AS sim
+      FROM
+        questions a,
+        questions b,
+        (SELECT set_config('pg_trgm.similarity_threshold', '${sim}', true)) AS cfg
+      WHERE
+          a.id < b.id
+        AND a.exam_id = b.exam_id
+        AND a.is_active = true
+        AND b.is_active = true
+        AND length(a.question_text_clean) > 15
+        AND length(b.question_text_clean) > 15
+        AND a.question_text_clean % b.question_text_clean
+        ${examClause}
+      ORDER BY sim DESC
+      LIMIT 5000
+    `);
 
+    const totalCount = await prisma.question.count({
+      where: {
+        isActive: true,
+        questionTextClean: { not: null },
+        ...(examId ? { examId: parseInt(examId) } : {}),
+      },
+    });
+
+    if (!rawPairs.length) {
+      return successResponse({
+        groups: [],
+        totalGroups: 0,
+        totalDuplicates: 0,
+        scanned: totalCount,
+      });
+    }
+
+    // Union-Find clustering
+    const parent = {};
+    const rankMap = {};
+    const pairSimMap = {};
+
+    function find(x) {
+      if (parent[x] === undefined) {
+        parent[x] = x;
+        rankMap[x] = 0;
+      }
+      if (parent[x] !== x) parent[x] = find(parent[x]);
+      return parent[x];
+    }
+    function union(x, y) {
+      const rx = find(x),
+        ry = find(y);
+      if (rx === ry) return;
+      if ((rankMap[rx] || 0) < (rankMap[ry] || 0)) parent[rx] = ry;
+      else if ((rankMap[rx] || 0) > (rankMap[ry] || 0)) parent[ry] = rx;
+      else {
+        parent[ry] = rx;
+        rankMap[rx] = (rankMap[rx] || 0) + 1;
+      }
+    }
+
+    rawPairs.forEach((row) => {
+      const a = Number(row.id_a),
+        b = Number(row.id_b);
+      union(a, b);
+      pairSimMap[`${a}-${b}`] = Number(row.sim);
+    });
+
+    const allIds = [
+      ...new Set(rawPairs.flatMap((r) => [Number(r.id_a), Number(r.id_b)])),
+    ];
+    const clusters = {};
+    allIds.forEach((id) => {
+      const root = find(id);
+      if (!clusters[root]) clusters[root] = [];
+      clusters[root].push(id);
+    });
+
+    // Fetch all question data
     const questions = await prisma.question.findMany({
-      where,
+      where: { id: { in: allIds } },
       select: {
         id: true,
         questionText: true,
@@ -52,68 +104,74 @@ export async function GET(request) {
         subject: { select: { id: true, name: true } },
         chapter: { select: { id: true, name: true } },
       },
-      orderBy: { id: "asc" },
     });
 
-    if (questions.length === 0) {
-      return successResponse({
-        groups: [],
-        totalGroups: 0,
-        totalDuplicates: 0,
-        scanned: 0,
-      });
-    }
+    const qMap = {};
+    questions.forEach((q) => {
+      qMap[q.id] = q;
+    });
 
-    const groups = [];
-    const visited = new Set();
-
-    for (let i = 0; i < questions.length; i++) {
-      if (visited.has(questions[i].id)) continue;
-
-      const group = [questions[i]];
-      visited.add(questions[i].id);
-
-      for (let j = i + 1; j < questions.length; j++) {
-        if (visited.has(questions[j].id)) continue;
-
-        const sim = similarity(
-          questions[i].questionText,
-          questions[j].questionText,
+    const allGroups = Object.values(clusters)
+      .filter((ids) => ids.length > 1 && ids.every((id) => qMap[id]))
+      .map((ids) => {
+        let groupMaxSim = 0;
+        ids.forEach((a) => {
+          ids.forEach((b) => {
+            if (a >= b) return;
+            const s = pairSimMap[`${a}-${b}`] || 0;
+            if (s > groupMaxSim) groupMaxSim = s;
+          });
+        });
+        const groupQuestions = ids.map((id) => {
+          let qMaxSim = 0;
+          ids.forEach((otherId) => {
+            if (otherId === id) return;
+            const key = id < otherId ? `${id}-${otherId}` : `${otherId}-${id}`;
+            const s = pairSimMap[key] || 0;
+            if (s > qMaxSim) qMaxSim = s;
+          });
+          return { ...qMap[id], similarity: Math.round(qMaxSim * 100) };
+        });
+        groupQuestions.sort(
+          (a, b) => new Date(a.createdAt) - new Date(b.createdAt),
         );
-        if (sim >= threshold) {
-          group.push({ ...questions[j], similarity: Math.round(sim * 100) });
-          visited.add(questions[j].id);
-        }
-      }
-
-      if (group.length > 1) {
-        group[0].similarity = 100;
-        groups.push(group);
-      }
-    }
-
-    const totalDuplicates = groups.reduce((sum, g) => sum + g.length - 1, 0);
+        groupQuestions[0].similarity = 100;
+        return { questions: groupQuestions, maxSim: groupMaxSim };
+      })
+      .sort((a, b) => b.maxSim - a.maxSim);
 
     return successResponse({
-      groups,
-      totalGroups: groups.length,
-      totalDuplicates,
-      scanned: questions.length,
+      groups: allGroups.map((g) => g.questions), // send all groups - client paginates
+      totalGroups: allGroups.length,
+      totalDuplicates: allGroups.reduce(
+        (sum, g) => sum + g.questions.length - 1,
+        0,
+      ),
+      scanned: totalCount,
     });
   } catch (error) {
-    console.error("Duplicates scan error:", error);
-    return errorResponse("Scan failed", 500);
+    console.error("Duplicate scan error:", error);
+    if (
+      error.message?.includes("similarity") ||
+      error.message?.includes("pg_trgm")
+    ) {
+      return errorResponse(
+        "pg_trgm not enabled. Run: CREATE EXTENSION IF NOT EXISTS pg_trgm;",
+        503,
+      );
+    }
+    return errorResponse("Scan failed: " + error.message, 500);
   }
 }
 
 export async function DELETE(request) {
   try {
     const { ids } = await request.json();
-    if (!ids || ids.length === 0) return errorResponse("No IDs provided");
-    await prisma.question.deleteMany({
+    if (!ids?.length) return errorResponse("No IDs provided");
+    const result = await prisma.question.deleteMany({
       where: { id: { in: ids.map(Number) } },
     });
-    return successResponse({ deleted: ids.length });
+    return successResponse({ deleted: result.count });
   } catch (error) {
     console.error(error);
     return errorResponse("Delete failed", 500);

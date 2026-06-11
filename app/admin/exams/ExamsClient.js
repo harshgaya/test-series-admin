@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import toast from "react-hot-toast";
 import {
   MdAdd,
@@ -9,6 +9,8 @@ import {
   MdToggleOn,
   MdToggleOff,
   MdSchool,
+  MdCheckCircle,
+  MdWarning,
 } from "react-icons/md";
 import Modal from "@/components/ui/Modal";
 import AlertDialog from "@/components/ui/AlertDialog";
@@ -31,6 +33,20 @@ export default function ExamsClient({ initialExams, tracks }) {
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [loading, setLoading] = useState(false);
+
+  // Flag exams that cannot make a test: no subjects or no questions
+  const issueMap = useMemo(() => {
+    const map = {};
+    exams.forEach((e) => {
+      const problems = [];
+      if ((e._count?.subjects ?? 0) === 0) problems.push("No subjects");
+      if ((e._count?.questions ?? 0) === 0) problems.push("No questions");
+      if (problems.length) map[e.id] = problems;
+    });
+    return map;
+  }, [exams]);
+
+  const totalIssues = Object.keys(issueMap).length;
 
   function handleNameChange(name) {
     const slug = name
@@ -166,6 +182,32 @@ export default function ExamsClient({ initialExams, tracks }) {
         </button>
       </div>
 
+      {/* Health banner */}
+      <div
+        className="mb-4 flex items-center gap-2 rounded-xl px-4 py-3"
+        style={{
+          background: totalIssues === 0 ? "#F0FDF4" : "#FFFBEB",
+          border: `1px solid ${totalIssues === 0 ? "#86EFAC" : "#FCD34D"}`,
+        }}
+      >
+        {totalIssues === 0 ? (
+          <>
+            <MdCheckCircle style={{ color: "#15803D", fontSize: 20 }} />
+            <span className="text-sm font-semibold text-green-800">
+              All exams have subjects and questions
+            </span>
+          </>
+        ) : (
+          <>
+            <MdWarning style={{ color: "#D97706", fontSize: 20 }} />
+            <span className="text-sm font-semibold text-yellow-800">
+              {totalIssues} exam{totalIssues > 1 ? "s" : ""} cannot build tests
+              yet (missing subjects or questions)
+            </span>
+          </>
+        )}
+      </div>
+
       <div className="card overflow-hidden">
         {exams.length === 0 ? (
           <EmptyState
@@ -183,6 +225,9 @@ export default function ExamsClient({ initialExams, tracks }) {
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  ID
+                </th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                   Exam
                 </th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
@@ -198,6 +243,9 @@ export default function ExamsClient({ initialExams, tracks }) {
                   Tests
                 </th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Health
+                </th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                   Status
                 </th>
                 <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
@@ -206,82 +254,114 @@ export default function ExamsClient({ initialExams, tracks }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {exams.map((exam) => (
-                <tr key={exam.id} className="table-row-hover">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      {exam.logoUrl ? (
-                        <img
-                          src={exam.logoUrl}
-                          alt={exam.name}
-                          className="w-8 h-8 rounded-lg object-cover"
-                        />
-                      ) : (
-                        <div className="w-8 h-8 bg-teal-50 rounded-lg flex items-center justify-center">
-                          <MdSchool style={{ color: "#0D9488" }} />
-                        </div>
-                      )}
-                      <div>
-                        <p className="font-medium text-gray-900">{exam.name}</p>
-                        <p className="text-xs text-gray-400">/{exam.slug}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      label={trackLabel(exam.track)}
-                      color={
-                        exam.track === "medical"
-                          ? "green"
-                          : exam.track === "engineering"
-                            ? "blue"
-                            : "purple"
-                      }
-                    />
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">
-                    {exam._count.subjects}
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">
-                    {exam._count.questions}
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">
-                    {exam._count.tests}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      label={exam.isActive ? "Active" : "Inactive"}
-                      color={exam.isActive ? "green" : "gray"}
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => toggleActive(exam)}
-                        className="text-gray-400 hover:text-teal-600 transition-colors p-1"
-                      >
-                        {exam.isActive ? (
-                          <MdToggleOn className="text-2xl text-green-500" />
+              {exams.map((exam) => {
+                const problems = issueMap[exam.id];
+                const healthy = !problems;
+                return (
+                  <tr
+                    key={exam.id}
+                    className="table-row-hover"
+                    style={{ background: healthy ? "transparent" : "#FFFBEB" }}
+                  >
+                    <td className="px-4 py-3 text-gray-400 text-xs font-mono">
+                      {exam.id}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        {exam.logoUrl ? (
+                          <img
+                            src={exam.logoUrl}
+                            alt={exam.name}
+                            className="w-8 h-8 rounded-lg object-cover"
+                          />
                         ) : (
-                          <MdToggleOff className="text-2xl" />
+                          <div className="w-8 h-8 bg-teal-50 rounded-lg flex items-center justify-center">
+                            <MdSchool style={{ color: "#0D9488" }} />
+                          </div>
                         )}
-                      </button>
-                      <button
-                        onClick={() => openEdit(exam)}
-                        className="text-gray-400 hover:text-teal-600 transition-colors p-1"
-                      >
-                        <MdEdit className="text-lg" />
-                      </button>
-                      <button
-                        onClick={() => openDelete(exam)}
-                        className="text-gray-400 hover:text-red-600 transition-colors p-1"
-                      >
-                        <MdDelete className="text-lg" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {exam.name}
+                          </p>
+                          <p className="text-xs text-gray-400">/{exam.slug}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        label={trackLabel(exam.track)}
+                        color={
+                          exam.track === "medical"
+                            ? "green"
+                            : exam.track === "engineering"
+                              ? "blue"
+                              : "purple"
+                        }
+                      />
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {exam._count.subjects}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {exam._count.questions}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {exam._count.tests}
+                    </td>
+                    <td className="px-4 py-3">
+                      {healthy ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ background: "#DCFCE7", color: "#15803D" }}
+                        >
+                          <MdCheckCircle style={{ fontSize: 13 }} /> OK
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ background: "#FEE2E2", color: "#DC2626" }}
+                          title={problems.join(" | ")}
+                        >
+                          <MdWarning style={{ fontSize: 13 }} />{" "}
+                          {problems.join(", ")}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        label={exam.isActive ? "Active" : "Inactive"}
+                        color={exam.isActive ? "green" : "gray"}
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => toggleActive(exam)}
+                          className="text-gray-400 hover:text-teal-600 transition-colors p-1"
+                        >
+                          {exam.isActive ? (
+                            <MdToggleOn className="text-2xl text-green-500" />
+                          ) : (
+                            <MdToggleOff className="text-2xl" />
+                          )}
+                        </button>
+                        <button
+                          onClick={() => openEdit(exam)}
+                          className="text-gray-400 hover:text-teal-600 transition-colors p-1"
+                        >
+                          <MdEdit className="text-lg" />
+                        </button>
+                        <button
+                          onClick={() => openDelete(exam)}
+                          className="text-gray-400 hover:text-red-600 transition-colors p-1"
+                        >
+                          <MdDelete className="text-lg" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -352,7 +432,7 @@ export default function ExamsClient({ initialExams, tracks }) {
             />
           </div>
 
-          {/* Logo upload — replaced URL input */}
+          {/* Logo upload - replaced URL input */}
           <FileUpload
             type="image"
             label="Exam Logo (optional)"

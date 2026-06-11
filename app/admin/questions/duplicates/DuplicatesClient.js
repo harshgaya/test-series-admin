@@ -6,11 +6,13 @@ import toast from "react-hot-toast";
 import {
   MdSearch,
   MdDelete,
-  MdCheckBox,
-  MdCheckBoxOutlineBlank,
   MdWarning,
   MdArrowBack,
+  MdArrowForward,
 } from "react-icons/md";
+import MathDisplay from "@/components/admin/question/MathDisplay";
+
+const PAGE_SIZE = 20;
 
 function SimilarityBadge({ pct }) {
   const color =
@@ -29,29 +31,30 @@ function SimilarityBadge({ pct }) {
   );
 }
 
-function truncate(text, len = 120) {
-  if (!text) return "";
-  const plain = text
-    .replace(/\$[^$]*\$/g, "[math]")
-    .replace(/\\\w+\{[^}]*\}/g, "[math]");
-  return plain.length > len ? plain.substring(0, len) + "..." : plain;
-}
-
 export default function DuplicatesClient({ exams }) {
-  const [groups, setGroups] = useState([]);
+  // All groups stored client-side after scan
+  const [allGroups, setAllGroups] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [checked, setChecked] = useState({});
-  const [threshold, setThreshold] = useState(85);
+  const [deleting, setDeleting] = useState(null); // groupIndex being deleted
+  const [threshold, setThreshold] = useState(95);
   const [filterExam, setFilterExam] = useState("");
   const [scanned, setScanned] = useState(false);
+  const [page, setPage] = useState(1);
+
+  // Client-side pagination - instant, no server round-trip
+  const totalPages = Math.ceil((allGroups?.length || 0) / PAGE_SIZE);
+  const pagedGroups = (allGroups || []).slice(
+    (page - 1) * PAGE_SIZE,
+    page * PAGE_SIZE,
+  );
 
   async function runScan() {
     setLoading(true);
-    setGroups([]);
-    setChecked({});
+    setAllGroups([]);
+    setStats(null);
     setScanned(false);
+    setPage(1);
     try {
       const params = new URLSearchParams({ threshold: threshold / 100 });
       if (filterExam) params.set("examId", filterExam);
@@ -61,15 +64,18 @@ export default function DuplicatesClient({ exams }) {
         toast.error(data.error);
         return;
       }
-      setGroups(data.data.groups);
+      setAllGroups(data.data.groups || []);
       setStats({
         groups: data.data.totalGroups,
         duplicates: data.data.totalDuplicates,
         scanned: data.data.scanned,
       });
       setScanned(true);
-      if (data.data.totalGroups === 0) toast.success("No duplicates found! 🎉");
-      else toast.error(`Found ${data.data.totalGroups} duplicate groups`);
+      if (data.data.totalGroups === 0) toast.success("No duplicates found!");
+      else
+        toast(`Found ${data.data.totalGroups} duplicate groups`, {
+          icon: "⚠️",
+        });
     } catch {
       toast.error("Scan failed");
     } finally {
@@ -77,77 +83,55 @@ export default function DuplicatesClient({ exams }) {
     }
   }
 
-  function toggleCheck(id) {
-    setChecked((c) => ({ ...c, [id]: !c[id] }));
-  }
+  // Delete all duplicates in a group (keep first/oldest)
+  async function deleteGroupDuplicates(groupIndex) {
+    const group = allGroups[groupIndex];
+    if (!group || group.length < 2) return;
+    const toDelete = group.slice(1).map((q) => q.id); // keep first, delete rest
 
-  function selectDuplicatesInGroup(group) {
-    const updates = {};
-    group.slice(1).forEach((q) => {
-      updates[q.id] = true;
-    });
-    setChecked((c) => ({ ...c, ...updates }));
-  }
-
-  function selectAllDuplicates() {
-    const updates = {};
-    groups.forEach((group) => {
-      group.slice(1).forEach((q) => {
-        updates[q.id] = true;
-      });
-    });
-    setChecked(updates);
-  }
-
-  function clearSelection() {
-    setChecked({});
-  }
-
-  const checkedIds = Object.entries(checked)
-    .filter(([, v]) => v)
-    .map(([id]) => parseInt(id));
-  const checkedCount = checkedIds.length;
-
-  async function deleteSelected() {
-    if (checkedCount === 0) {
-      toast.error("Select questions to delete");
-      return;
-    }
-    if (
-      !confirm(
-        `Delete ${checkedCount} selected questions? This cannot be undone.`,
-      )
-    )
-      return;
-    setDeleting(true);
+    setDeleting(groupIndex);
     try {
       const res = await fetch("/api/questions/duplicates", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: checkedIds }),
+        body: JSON.stringify({ ids: toDelete }),
       });
       const data = await res.json();
       if (!data.success) {
         toast.error(data.error);
         return;
       }
-      toast.success(`${data.data.deleted} questions deleted!`);
-      const newGroups = groups
-        .map((g) => g.filter((q) => !checkedIds.includes(q.id)))
-        .filter((g) => g.length > 1);
-      setGroups(newGroups);
-      setChecked({});
+
+      toast.success(
+        `${data.data.deleted} question${data.data.deleted > 1 ? "s" : ""} deleted`,
+      );
+
+      // Remove this group from list - instant UI update
+      const newGroups = allGroups.filter((_, i) => i !== groupIndex);
+      setAllGroups(newGroups);
       setStats((s) => ({
         ...s,
-        groups: newGroups.length,
-        duplicates: newGroups.reduce((sum, g) => sum + g.length - 1, 0),
+        groups: (s?.groups || 1) - 1,
+        duplicates: (s?.duplicates || 0) - toDelete.length,
       }));
+
+      // Adjust page if needed
+      const newTotalPages = Math.ceil(newGroups.length / PAGE_SIZE);
+      if (page > newTotalPages && newTotalPages > 0) setPage(newTotalPages);
     } catch {
       toast.error("Delete failed");
     } finally {
-      setDeleting(false);
+      setDeleting(null);
     }
   }
+
+  function goToPage(p) {
+    setPage(p);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // Global offset for group numbering
+  const globalOffset = (page - 1) * PAGE_SIZE;
 
   return (
     <div className="space-y-5">
@@ -166,7 +150,8 @@ export default function DuplicatesClient({ exams }) {
               Scan for Duplicates
             </h2>
             <p className="text-sm text-gray-500">
-              Scans all questions and groups exact + near-duplicate matches
+              Uses Postgres trigram similarity. Set 95%+ to avoid false
+              positives on template questions.
             </p>
           </div>
           <button
@@ -178,6 +163,7 @@ export default function DuplicatesClient({ exams }) {
             {loading ? "Scanning..." : "Run Scan"}
           </button>
         </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5">
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5">
@@ -204,19 +190,20 @@ export default function DuplicatesClient({ exams }) {
             </label>
             <input
               type="range"
-              min={70}
+              min={85}
               max={100}
               value={threshold}
               onChange={(e) => setThreshold(parseInt(e.target.value))}
               className="w-full accent-teal-600"
             />
             <div className="flex justify-between text-xs text-gray-400 mt-0.5">
-              <span>70% (loose)</span>
-              <span>85% (recommended)</span>
+              <span>85% (loose)</span>
+              <span>95% (recommended)</span>
               <span>100% (exact only)</span>
             </div>
           </div>
         </div>
+
         {loading && (
           <div className="mt-5 flex items-center gap-3 p-4 bg-teal-50 border border-teal-100 rounded-xl">
             <div className="w-5 h-5 border-2 border-teal-200 border-t-teal-600 rounded-full animate-spin shrink-0" />
@@ -225,7 +212,7 @@ export default function DuplicatesClient({ exams }) {
                 Scanning question bank...
               </p>
               <p className="text-xs text-teal-600 mt-0.5">
-                This may take a moment for large question banks
+                Using pg_trgm index - usually 2-5 seconds
               </p>
             </div>
           </div>
@@ -238,21 +225,21 @@ export default function DuplicatesClient({ exams }) {
           {[
             {
               label: "Questions Scanned",
-              value: stats.scanned.toLocaleString("en-IN"),
+              value: (stats.scanned || 0).toLocaleString("en-IN"),
               icon: "🔍",
               bg: "bg-blue-50",
               text: "text-blue-700",
             },
             {
               label: "Duplicate Groups",
-              value: stats.groups,
+              value: stats?.groups || 0,
               icon: "📦",
               bg: "bg-orange-50",
               text: "text-orange-700",
             },
             {
               label: "Duplicates Found",
-              value: stats.duplicates,
+              value: stats?.duplicates || 0,
               icon: "⚠️",
               bg: "bg-red-50",
               text: "text-red-700",
@@ -272,128 +259,171 @@ export default function DuplicatesClient({ exams }) {
         </div>
       )}
 
-      {/* Action bar */}
-      {groups.length > 0 && (
-        <div className="card p-4 flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3 flex-wrap">
-            <button
-              onClick={selectAllDuplicates}
-              className="text-xs px-3 py-1.5 bg-orange-50 border border-orange-200 text-orange-700 font-semibold rounded-lg hover:bg-orange-100 transition-colors"
-            >
-              Select All Duplicates ({stats?.duplicates})
-            </button>
-            <button
-              onClick={clearSelection}
-              className="text-xs px-3 py-1.5 bg-gray-100 text-gray-600 font-semibold rounded-lg hover:bg-gray-200 transition-colors"
-            >
-              Clear Selection
-            </button>
-            {checkedCount > 0 && (
-              <span className="text-xs font-semibold text-teal-700 bg-teal-50 px-3 py-1.5 rounded-lg">
-                {checkedCount} selected
-              </span>
-            )}
-          </div>
-          <button
-            onClick={deleteSelected}
-            disabled={deleting || checkedCount === 0}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
-              checkedCount === 0
-                ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                : "bg-red-600 hover:bg-red-700 text-white cursor-pointer"
-            }`}
-            style={{ fontFamily: "Poppins, sans-serif", border: "none" }}
-          >
-            <MdDelete className="text-lg" />
-            {deleting ? "Deleting..." : `Delete Selected (${checkedCount})`}
-          </button>
-        </div>
-      )}
-
       {/* Groups */}
-      {groups.length > 0 && (
-        <div className="space-y-4">
-          {groups.map((group, gi) => (
-            <div key={gi} className="card overflow-hidden">
-              <div className="px-5 py-3.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <MdWarning className="text-orange-400 text-lg" />
-                  <div>
-                    <p className="text-sm font-bold text-gray-900">
-                      Group {gi + 1} — {group.length} questions
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {group[0].exam?.name} · {group[0].subject?.name} ·{" "}
-                      {group[0].chapter?.name}
-                    </p>
+      {(allGroups?.length ?? 0) > 0 && (
+        <>
+          <div className="space-y-4">
+            {pagedGroups.map((group, gi) => {
+              const globalIndex = allGroups.indexOf(group);
+              const isDeleting = deleting === globalIndex;
+              const duplicateIds = group.slice(1).map((q) => q.id);
+
+              return (
+                <div key={gi} className="card overflow-hidden">
+                  {/* Group header */}
+                  <div className="px-5 py-3.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <MdWarning className="text-orange-400 text-lg" />
+                      <div>
+                        <p className="text-sm font-bold text-gray-900">
+                          Group {globalOffset + gi + 1} — {group.length}{" "}
+                          questions
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {group[0].exam?.name} · {group[0].subject?.name} ·{" "}
+                          {group[0].chapter?.name}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Delete duplicates button - directly on group card */}
+                    <button
+                      onClick={() => deleteGroupDuplicates(globalIndex)}
+                      disabled={isDeleting}
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold transition-all"
+                      style={{
+                        background: isDeleting ? "#FEE2E2" : "#DC2626",
+                        color: "white",
+                        opacity: isDeleting ? 0.7 : 1,
+                      }}
+                    >
+                      <MdDelete style={{ fontSize: 14 }} />
+                      {isDeleting
+                        ? "Deleting..."
+                        : `Delete ${duplicateIds.length} Duplicate${duplicateIds.length > 1 ? "s" : ""}`}
+                    </button>
                   </div>
+
+                  {/* Questions in group */}
+                  {group.map((q, qi) => {
+                    const isFirst = qi === 0;
+                    return (
+                      <div
+                        key={q.id}
+                        className={`flex items-start gap-4 px-5 py-4 border-b border-gray-100 last:border-0 ${isFirst ? "bg-green-50/50" : "bg-white"}`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                            <span className="text-xs font-semibold text-gray-400">
+                              Q#{q.id}
+                            </span>
+                            <SimilarityBadge pct={q.similarity} />
+                            {isFirst && (
+                              <span className="text-xs font-bold px-2 py-0.5 bg-green-100 text-green-700 rounded-full">
+                                ✓ Original (keep)
+                              </span>
+                            )}
+                            {!isFirst && (
+                              <span className="text-xs font-bold px-2 py-0.5 bg-red-50 text-red-500 rounded-full">
+                                Will be deleted
+                              </span>
+                            )}
+                            <span className="text-xs text-gray-400">
+                              {q.difficulty}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {new Date(q.createdAt).toLocaleDateString(
+                                "en-IN",
+                              )}
+                            </span>
+                          </div>
+                          <MathDisplay
+                            text={q.questionText}
+                            className="text-sm text-gray-700 leading-relaxed"
+                            style={{
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical",
+                              overflow: "hidden",
+                            }}
+                          />
+                        </div>
+                        <Link
+                          href={`/admin/questions/${q.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-teal-600 no-underline font-semibold shrink-0 hover:text-teal-800 transition-colors"
+                        >
+                          Edit ↗
+                        </Link>
+                      </div>
+                    );
+                  })}
                 </div>
+              );
+            })}
+          </div>
+
+          {/* Pagination - instant, no server call */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between py-2">
+              <p className="text-xs text-gray-500">
+                Page {page} of {totalPages} ({allGroups.length} total groups)
+              </p>
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => selectDuplicatesInGroup(group)}
-                  className="text-xs px-3 py-1.5 bg-orange-50 border border-orange-200 text-orange-700 font-semibold rounded-lg hover:bg-orange-100 transition-colors"
+                  onClick={() => goToPage(page - 1)}
+                  disabled={page <= 1}
+                  className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border font-medium disabled:opacity-40"
+                  style={{ borderColor: "#E2E8F0", color: "#6B7280" }}
                 >
-                  Keep First, Select Rest
+                  <MdArrowBack style={{ fontSize: 14 }} /> Prev
+                </button>
+
+                {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                  let p;
+                  if (totalPages <= 7) p = i + 1;
+                  else if (page <= 4) p = i + 1;
+                  else if (page >= totalPages - 3) p = totalPages - 6 + i;
+                  else p = page - 3 + i;
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => goToPage(p)}
+                      className="text-xs w-8 h-8 rounded-lg font-medium transition-all"
+                      style={{
+                        background: p === page ? "#0D9488" : "#F8FAFC",
+                        color: p === page ? "white" : "#6B7280",
+                        border: `0.5px solid ${p === page ? "#0D9488" : "#E2E8F0"}`,
+                      }}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+
+                <button
+                  onClick={() => goToPage(page + 1)}
+                  disabled={page >= totalPages}
+                  className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border font-medium disabled:opacity-40"
+                  style={{ borderColor: "#E2E8F0", color: "#6B7280" }}
+                >
+                  Next <MdArrowForward style={{ fontSize: 14 }} />
                 </button>
               </div>
-              {group.map((q, qi) => {
-                const isFirst = qi === 0;
-                const isChecked = !!checked[q.id];
-                return (
-                  <div
-                    key={q.id}
-                    className={`flex items-start gap-4 px-5 py-4 border-b border-gray-100 last:border-0 transition-colors ${isChecked ? "bg-red-50" : isFirst ? "bg-green-50/50" : "bg-white"}`}
-                  >
-                    <button
-                      onClick={() => toggleCheck(q.id)}
-                      className={`mt-0.5 shrink-0 text-xl cursor-pointer transition-colors ${isChecked ? "text-red-500" : "text-gray-300 hover:text-gray-500"}`}
-                      style={{ background: "none", border: "none" }}
-                    >
-                      {isChecked ? <MdCheckBox /> : <MdCheckBoxOutlineBlank />}
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        <span className="text-xs font-semibold text-gray-400">
-                          Q#{q.id}
-                        </span>
-                        <SimilarityBadge pct={q.similarity} />
-                        {isFirst && (
-                          <span className="text-xs font-bold px-2 py-0.5 bg-green-100 text-green-700 rounded-full">
-                            ✓ Original (keep)
-                          </span>
-                        )}
-                        <span className="text-xs text-gray-400">
-                          {q.difficulty}
-                        </span>
-                        <span className="text-xs text-gray-400">
-                          {new Date(q.createdAt).toLocaleDateString("en-IN")}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-700 leading-relaxed">
-                        {truncate(q.questionText)}
-                      </p>
-                    </div>
-                    <Link
-                      href={`/admin/questions/${q.id}`}
-                      className="text-xs text-teal-600 no-underline font-semibold shrink-0 hover:text-teal-800 transition-colors"
-                    >
-                      Edit →
-                    </Link>
-                  </div>
-                );
-              })}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
-      {scanned && groups.length === 0 && !loading && (
+      {scanned && (allGroups?.length ?? 0) === 0 && !loading && (
         <div className="card p-16 text-center">
           <p className="text-5xl mb-4">✅</p>
           <p className="text-base font-bold text-gray-700 mb-2">
             No duplicates found!
           </p>
           <p className="text-sm text-gray-400">
-            Your question bank is clean at {threshold}% similarity threshold
+            Question bank is clean at {threshold}% similarity threshold
           </p>
         </div>
       )}
@@ -405,7 +435,7 @@ export default function DuplicatesClient({ exams }) {
             Click "Run Scan" to find duplicates
           </p>
           <p className="text-sm text-gray-400">
-            Scans all questions and groups similar ones together
+            Compares cleaned question text using Postgres trigram index
           </p>
         </div>
       )}

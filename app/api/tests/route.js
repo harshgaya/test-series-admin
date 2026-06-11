@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse, getPagination } from "@/lib/api";
+import { encodeTest } from "@/lib/hashid";
 
 export async function GET(request) {
   try {
@@ -8,17 +9,14 @@ export async function GET(request) {
     const examId = searchParams.get("examId");
     const testType = searchParams.get("type");
     const status = searchParams.get("status");
-
     const where = {};
     if (examId) where.examId = parseInt(examId);
     if (testType) where.testType = testType;
-
     if (status) {
       where.status = status;
     } else {
       where.status = { not: "CRASH_ONLY" };
     }
-
     const [tests, total] = await Promise.all([
       prisma.test.findMany({
         where,
@@ -35,8 +33,15 @@ export async function GET(request) {
       prisma.test.count({ where }),
     ]);
 
+    // Keep int id intact (admin edit/delete/preview need it).
+    // Add hashid as a separate publicId field for the shareable student link.
+    const encodedTests = tests.map((t) => ({
+      ...t,
+      publicId: encodeTest(t.id),
+    }));
+
     return successResponse({
-      tests,
+      tests: encodedTests,
       total,
       page,
       totalPages: Math.ceil(total / limit),
@@ -72,13 +77,10 @@ export async function POST(request) {
       questionIds,
       endedAt,
     } = body;
-
     if (!title || !examId || !testType) {
       return errorResponse("Title, exam and test type are required");
     }
-
     const totalMarks = (questionIds?.length || 0) * (marksCorrect || 4);
-
     const test = await prisma.test.create({
       data: {
         title,
@@ -114,14 +116,12 @@ export async function POST(request) {
         _count: { select: { testQuestions: true, attempts: true } },
       },
     });
-
     if (questionIds?.length) {
       await prisma.question.updateMany({
         where: { id: { in: questionIds.map(Number) } },
         data: { usageCount: { increment: 1 } },
       });
     }
-
     return successResponse(test, 201);
   } catch (error) {
     console.error(error);

@@ -133,6 +133,7 @@ model Question {
   chapterId          Int          @map("chapter_id")
   topicId            Int?         @map("topic_id")
   questionText       String       @map("question_text")
+  questionTextClean  String?      @map("question_text_clean")
   questionImageUrl   String?      @map("question_image_url")
   questionType       QuestionType @default(MCQ) @map("question_type")
   difficulty         Difficulty   @default(MEDIUM)
@@ -148,6 +149,11 @@ model Question {
   attemptCount       Int          @default(0) @map("attempt_count")
   correctCount       Int          @default(0) @map("correct_count")
   createdBy          Int?         @map("created_by")
+  isAiValidated      Boolean      @default(false) @map("is_ai_validated")
+  aiValidationStatus String?      @map("ai_validation_status")
+  aiValidationNotes  String?      @map("ai_validation_notes")
+  aiValidatedAt      DateTime?    @map("ai_validated_at")
+  aiValidationFix    String?      @map("ai_validation_fix")
   createdAt          DateTime     @default(now()) @map("created_at")
   updatedAt          DateTime     @updatedAt @map("updated_at")
 
@@ -160,6 +166,7 @@ model Question {
   testQuestions  TestQuestion[]
   attemptAnswers AttemptAnswer[]
   reports        QuestionReport[]
+  paperQuestions PaperQuestion[]
 
   @@index([examId])
   @@index([subjectId])
@@ -268,23 +275,23 @@ model TestPurchase {
 
 // ─── TEST ATTEMPTS ────────────────────────────────
 model TestAttempt {
-  id            Int           @id @default(autoincrement())
-  studentId     Int           @map("student_id")
-  testId        Int           @map("test_id")
-  attemptNumber Int           @default(1) @map("attempt_number")
-  startedAt     DateTime      @default(now()) @map("started_at")
-  submittedAt   DateTime?     @map("submitted_at")
-  timeTakenSecs Int?          @map("time_taken_secs")
-  score         Decimal       @default(0)
-  totalMarks    Int           @default(0) @map("total_marks")
-  correctCount  Int           @default(0) @map("correct_count")
-  wrongCount    Int           @default(0) @map("wrong_count")
-  skippedCount  Int           @default(0) @map("skipped_count")
-  rank          Int?
-  percentile    Decimal?
-  totalAttempted Int?         @map("total_attempted")
-  status        AttemptStatus @default(IN_PROGRESS)
-  createdAt     DateTime      @default(now()) @map("created_at")
+  id             Int           @id @default(autoincrement())
+  studentId      Int           @map("student_id")
+  testId         Int           @map("test_id")
+  attemptNumber  Int           @default(1) @map("attempt_number")
+  startedAt      DateTime      @default(now()) @map("started_at")
+  submittedAt    DateTime?     @map("submitted_at")
+  timeTakenSecs  Int?          @map("time_taken_secs")
+  score          Decimal       @default(0)
+  totalMarks     Int           @default(0) @map("total_marks")
+  correctCount   Int           @default(0) @map("correct_count")
+  wrongCount     Int           @default(0) @map("wrong_count")
+  skippedCount   Int           @default(0) @map("skipped_count")
+  rank           Int?
+  percentile     Decimal?
+  totalAttempted Int?          @map("total_attempted")
+  status         AttemptStatus @default(IN_PROGRESS)
+  createdAt      DateTime      @default(now()) @map("created_at")
 
   student Student         @relation(fields: [studentId], references: [id])
   test    Test            @relation(fields: [testId],    references: [id])
@@ -374,15 +381,15 @@ model CrashCourseEnrollment {
 
 // ─── ANNOUNCEMENTS ────────────────────────────────
 model Announcement {
-  id               Int       @id @default(autoincrement())
-  title            String
-  message          String
-  showOnHomepage   Boolean   @default(true) @map("show_on_homepage")
-  showOnDashboard  Boolean   @default(true) @map("show_on_dashboard")
-  isActive         Boolean   @default(true) @map("is_active")
-  expiresAt        DateTime? @map("expires_at")
-  createdBy        Int?      @map("created_by")
-  createdAt        DateTime  @default(now()) @map("created_at")
+  id              Int       @id @default(autoincrement())
+  title           String
+  message         String
+  showOnHomepage  Boolean   @default(true) @map("show_on_homepage")
+  showOnDashboard Boolean   @default(true) @map("show_on_dashboard")
+  isActive        Boolean   @default(true) @map("is_active")
+  expiresAt       DateTime? @map("expires_at")
+  createdBy       Int?      @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
 
   admin Admin? @relation(fields: [createdBy], references: [id])
 
@@ -410,18 +417,18 @@ model QuestionReport {
 
 // ─── PAYMENTS ─────────────────────────────────────
 model Payment {
-  id                  Int           @id @default(autoincrement())
-  studentId           Int           @map("student_id")
-  testId              Int?          @map("test_id")
-  crashCourseId       Int?          @map("crash_course_id")
-  razorpayOrderId     String        @unique @map("razorpay_order_id")
-  razorpayPaymentId   String?       @unique @map("razorpay_payment_id")
-  razorpaySignature   String?       @map("razorpay_signature")
-  amount              Decimal
-  currency            String        @default("INR")
-  status              PaymentStatus @default(PENDING)
-  createdAt           DateTime      @default(now()) @map("created_at")
-  updatedAt           DateTime      @updatedAt @map("updated_at")
+  id                Int           @id @default(autoincrement())
+  studentId         Int           @map("student_id")
+  testId            Int?          @map("test_id")
+  crashCourseId     Int?          @map("crash_course_id")
+  razorpayOrderId   String        @unique @map("razorpay_order_id")
+  razorpayPaymentId String?       @unique @map("razorpay_payment_id")
+  razorpaySignature String?       @map("razorpay_signature")
+  amount            Decimal
+  currency          String        @default("INR")
+  status            PaymentStatus @default(PENDING)
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
 
   student Student @relation(fields: [studentId], references: [id])
   test    Test?   @relation(fields: [testId],    references: [id])
@@ -439,6 +446,92 @@ model Setting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("settings")
+}
+
+// ─── PAPER GENERATOR ──────────────────────────────
+model PaperTemplate {
+  id            Int      @id @default(autoincrement())
+  name          String
+  instituteName String?  @map("institute_name")
+  examTitle     String   @map("exam_title")
+  subject       String?
+  duration      String?
+  maxMarks      Int?     @map("max_marks")
+  date          String?
+  instructions  String?
+  shuffleQ      Boolean  @default(false) @map("shuffle_questions")
+  shuffleOpts   Boolean  @default(false) @map("shuffle_options")
+  twoColumn     Boolean  @default(false) @map("two_column")
+  fontSize      String   @default("medium") @map("font_size")
+  createdBy     Int?     @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  sections PaperSection[]
+
+  @@map("paper_templates")
+}
+
+model PaperSection {
+  id         Int   @id @default(autoincrement())
+  templateId Int   @map("template_id")
+  name       String
+  orderIndex Int   @default(0) @map("order_index")
+  marksPerQ  Int   @default(4) @map("marks_per_q")
+  negMarks   Float @default(1.0) @map("neg_marks")
+
+  template  PaperTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  questions PaperQuestion[]
+
+  @@map("paper_sections")
+}
+
+model PaperQuestion {
+  id         Int @id @default(autoincrement())
+  sectionId  Int @map("section_id")
+  questionId Int @map("question_id")
+  orderIndex Int @default(0) @map("order_index")
+
+  section  PaperSection @relation(fields: [sectionId],  references: [id], onDelete: Cascade)
+  question Question     @relation(fields: [questionId], references: [id])
+
+  @@map("paper_questions")
+}
+model BillingCycle {
+  id             Int       @id @default(autoincrement())
+  month          Int
+  year           Int
+  apiCostUsd     Float     @default(0) @map("api_cost_usd")
+  apiCostInr     Float     @default(0) @map("api_cost_inr")
+  apiBilledInr   Float     @default(0) @map("api_billed_inr")
+  uniqueStudents Int       @default(0) @map("unique_students")
+  studentBilledInr Float   @default(0) @map("student_billed_inr")
+  totalInr       Float     @default(0) @map("total_inr")
+  usdToInr       Float     @default(95) @map("usd_to_inr")
+  status         String    @default("pending")
+  dueDate        DateTime? @map("due_date")
+  paidAt         DateTime? @map("paid_at")
+  razorpayOrderId String?  @unique @map("razorpay_order_id")
+  razorpayPaymentId String? @unique @map("razorpay_payment_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([month, year])
+  @@map("billing_cycles")
+}
+
+model ApiUsageLog {
+  id           Int      @id @default(autoincrement())
+  route        String
+  model        String
+  inputTokens  Int      @map("input_tokens")
+  outputTokens Int      @map("output_tokens")
+  costUsd      Float    @map("cost_usd")
+  month        Int
+  year         Int
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([month, year])
+  @@map("api_usage_logs")
 }
 
 // ─── ENUMS ────────────────────────────────────────

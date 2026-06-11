@@ -19,6 +19,7 @@ import {
   MdSettings,
   MdLogout,
   MdChevronRight,
+  MdReceiptLong,
 } from "react-icons/md";
 import { APP_NAME } from "@/lib/constants";
 
@@ -46,6 +47,7 @@ const ICONS = {
   MdAttachMoney,
   MdCampaign,
   MdSettings,
+  MdReceiptLong,
 };
 
 const NAV_ITEMS = [
@@ -77,6 +79,11 @@ const NAV_ITEMS = [
       { href: "/admin/tests", label: "All Tests", icon: "MdAssignment" },
       { href: "/admin/live-exams", label: "Live Exams", icon: "MdLiveTv" },
       { href: "/admin/crash-courses", label: "Crash Courses", icon: "MdBolt" },
+      {
+        href: "/admin/tests/paper-generator",
+        label: "Offline Tests",
+        icon: "MdBolt",
+      },
     ],
   },
   {
@@ -95,6 +102,7 @@ const NAV_ITEMS = [
         icon: "MdCampaign",
       },
       { href: "/admin/settings", label: "Settings", icon: "MdSettings" },
+      { href: "/admin/billing", label: "Billing", icon: "MdReceiptLong" },
     ],
   },
 ];

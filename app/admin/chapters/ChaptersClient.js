@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import toast from "react-hot-toast";
 import {
   MdAdd,
@@ -8,6 +8,8 @@ import {
   MdDelete,
   MdToggleOn,
   MdToggleOff,
+  MdCheckCircle,
+  MdWarning,
 } from "react-icons/md";
 import Modal from "@/components/ui/Modal";
 import AlertDialog from "@/components/ui/AlertDialog";
@@ -27,17 +29,72 @@ export default function ChaptersClient({ chapters: init, exams, subjects }) {
     description: "",
   });
   const [loading, setLoading] = useState(false);
+  const [issuesOnly, setIssuesOnly] = useState(false);
 
   // Filter subjects by selected exam
   const filteredSubjects = filterExam
     ? subjects.filter((s) => s.examId === parseInt(filterExam))
     : subjects;
 
+  // ── Detect problems across ALL chapters (not just filtered) ──────────────
+  // A chapter is flagged if:
+  //   - duplicate chapter name within the same subject, OR
+  //   - its subject name is duplicated within the same exam (duplicate subject)
+  const issueMap = useMemo(() => {
+    const map = {}; // chapterId -> array of problem strings
+
+    // Count chapter names per subject
+    const chapNameBySubject = {}; // `${subjectId}|${lowername}` -> count
+    chapters.forEach((c) => {
+      const k = `${c.subjectId}|${(c.name || "").trim().toLowerCase()}`;
+      chapNameBySubject[k] = (chapNameBySubject[k] || 0) + 1;
+    });
+
+    // Count subject names per exam (using subjects list)
+    const subNameByExam = {}; // `${examId}|${lowername}` -> count
+    subjects.forEach((s) => {
+      const k = `${s.examId}|${(s.name || "").trim().toLowerCase()}`;
+      subNameByExam[k] = (subNameByExam[k] || 0) + 1;
+    });
+
+    chapters.forEach((c) => {
+      const problems = [];
+
+      // Duplicate chapter name in same subject
+      const ck = `${c.subjectId}|${(c.name || "").trim().toLowerCase()}`;
+      if (chapNameBySubject[ck] > 1) {
+        problems.push("Duplicate chapter name in this subject");
+      }
+
+      // Duplicate subject within exam
+      const examId = c.subject?.exam?.id;
+      const subName = c.subject?.name;
+      if (examId && subName) {
+        const sk = `${examId}|${subName.trim().toLowerCase()}`;
+        if (subNameByExam[sk] > 1) {
+          problems.push("Subject name is duplicated within this exam");
+        }
+      }
+
+      // Missing exam link
+      if (!c.subject?.exam?.id) {
+        problems.push("Chapter not linked to any exam");
+      }
+
+      if (problems.length > 0) map[c.id] = problems;
+    });
+
+    return map;
+  }, [chapters, subjects]);
+
+  const totalIssues = Object.keys(issueMap).length;
+
   // Filter chapters
   const filtered = chapters.filter((c) => {
     if (filterExam && c.subject?.exam?.id !== parseInt(filterExam))
       return false;
     if (filterSub && c.subjectId !== parseInt(filterSub)) return false;
+    if (issuesOnly && !issueMap[c.id]) return false;
     return true;
   });
 
@@ -199,6 +256,46 @@ export default function ChaptersClient({ chapters: init, exams, subjects }) {
         </div>
       </div>
 
+      {/* Health summary banner */}
+      <div
+        className="mb-4 flex items-center justify-between rounded-xl px-4 py-3"
+        style={{
+          background: totalIssues === 0 ? "#F0FDF4" : "#FFFBEB",
+          border: `1px solid ${totalIssues === 0 ? "#86EFAC" : "#FCD34D"}`,
+        }}
+      >
+        <div className="flex items-center gap-2">
+          {totalIssues === 0 ? (
+            <>
+              <MdCheckCircle style={{ color: "#15803D", fontSize: 20 }} />
+              <span className="text-sm font-semibold text-green-800">
+                All chapters look correct - no duplicate or misfiled chapters
+              </span>
+            </>
+          ) : (
+            <>
+              <MdWarning style={{ color: "#D97706", fontSize: 20 }} />
+              <span className="text-sm font-semibold text-yellow-800">
+                {totalIssues} chapter{totalIssues > 1 ? "s" : ""} need attention
+                (duplicates or missing exam link)
+              </span>
+            </>
+          )}
+        </div>
+        {totalIssues > 0 && (
+          <button
+            onClick={() => setIssuesOnly((v) => !v)}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+            style={{
+              background: issuesOnly ? "#D97706" : "#FEF3C7",
+              color: issuesOnly ? "white" : "#92400E",
+            }}
+          >
+            {issuesOnly ? "Show All" : "Show Issues Only"}
+          </button>
+        )}
+      </div>
+
       <div className="card overflow-hidden">
         {filtered.length === 0 ? (
           <EmptyState
@@ -216,12 +313,16 @@ export default function ChaptersClient({ chapters: init, exams, subjects }) {
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 {[
+                  "Status",
+                  "Ch ID",
                   "Chapter",
                   "Subject",
+                  "Sub ID",
                   "Exam",
+                  "Exam ID",
                   "Topics",
                   "Questions",
-                  "Status",
+                  "Active",
                   "Actions",
                 ].map((h) => (
                   <th
@@ -234,56 +335,101 @@ export default function ChaptersClient({ chapters: init, exams, subjects }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filtered.map((c) => (
-                <tr key={c.id} className="table-row-hover">
-                  <td className="px-4 py-3 font-medium text-gray-900">
-                    {c.name}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{c.subject?.name}</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {c.subject?.exam?.name}
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">{c._count.topics}</td>
-                  <td className="px-4 py-3 text-gray-700">
-                    {c._count.questions}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      label={c.isActive ? "Active" : "Inactive"}
-                      color={c.isActive ? "green" : "gray"}
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => toggleActive(c)}
-                        className="p-1 text-gray-400 hover:text-blue-600"
-                      >
-                        {c.isActive ? (
-                          <MdToggleOn className="text-2xl text-green-500" />
-                        ) : (
-                          <MdToggleOff className="text-2xl" />
-                        )}
-                      </button>
-                      <button
-                        onClick={() => openEdit(c)}
-                        className="p-1 text-gray-400 hover:text-blue-600"
-                      >
-                        <MdEdit className="text-lg" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelected(c);
-                          setShowDelete(true);
-                        }}
-                        className="p-1 text-gray-400 hover:text-red-600"
-                      >
-                        <MdDelete className="text-lg" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((c) => {
+                const problems = issueMap[c.id];
+                const ok = !problems;
+                return (
+                  <tr
+                    key={c.id}
+                    className="table-row-hover"
+                    style={{ background: ok ? "transparent" : "#FFFBEB" }}
+                  >
+                    {/* Status */}
+                    <td className="px-4 py-3">
+                      {ok ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ background: "#DCFCE7", color: "#15803D" }}
+                        >
+                          <MdCheckCircle style={{ fontSize: 13 }} /> OK
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ background: "#FEE2E2", color: "#DC2626" }}
+                          title={problems.join(" | ")}
+                        >
+                          <MdWarning style={{ fontSize: 13 }} /> Issue
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-400 text-xs font-mono">
+                      {c.id}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-gray-900">
+                      {c.name}
+                      {!ok && (
+                        <span className="block text-[11px] font-normal text-red-500 mt-0.5">
+                          {problems[0]}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {c.subject?.name}
+                    </td>
+                    <td className="px-4 py-3 text-gray-400 text-xs font-mono">
+                      {c.subject?.id ?? c.subjectId}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      {c.subject?.exam?.name}
+                    </td>
+                    <td className="px-4 py-3 text-gray-400 text-xs font-mono">
+                      {c.subject?.exam?.id ?? "-"}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {c._count.topics}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {c._count.questions}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        label={c.isActive ? "Active" : "Inactive"}
+                        color={c.isActive ? "green" : "gray"}
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => toggleActive(c)}
+                          className="p-1 text-gray-400 hover:text-blue-600"
+                        >
+                          {c.isActive ? (
+                            <MdToggleOn className="text-2xl text-green-500" />
+                          ) : (
+                            <MdToggleOff className="text-2xl" />
+                          )}
+                        </button>
+                        <button
+                          onClick={() => openEdit(c)}
+                          className="p-1 text-gray-400 hover:text-blue-600"
+                        >
+                          <MdEdit className="text-lg" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelected(c);
+                            setShowDelete(true);
+                          }}
+                          className="p-1 text-gray-400 hover:text-red-600"
+                        >
+                          <MdDelete className="text-lg" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

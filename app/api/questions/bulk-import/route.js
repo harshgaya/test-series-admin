@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api";
+import { resolveClassification } from "@/lib/resolveClassification";
 
 export async function POST(request) {
   try {
@@ -13,9 +14,18 @@ export async function POST(request) {
     let duplicates = 0;
     let errors = 0;
 
-    // Cache auto-created topics to avoid duplicate DB calls
-    // key: "chapterId_topicName" → topicId
+    // Cache: chapterId -> { subjectId, examId } so we don't re-lookup per row
+    const classCache = {};
+    // Cache auto-created topics: "chapterId_topicName" -> topicId
     const topicCache = {};
+
+    async function getClassification(chapterId) {
+      const key = String(chapterId);
+      if (classCache[key]) return classCache[key];
+      const c = await resolveClassification(chapterId);
+      classCache[key] = c;
+      return c;
+    }
 
     async function resolveTopicId(topicName, chapterId) {
       if (!topicName || !chapterId) return null;
@@ -23,7 +33,6 @@ export async function POST(request) {
       const key = `${chapterId}_${topicName.trim().toLowerCase()}`;
       if (topicCache[key]) return topicCache[key];
 
-      // Try to find existing topic
       const existing = await prisma.topic.findFirst({
         where: {
           chapterId: parseInt(chapterId),
@@ -37,7 +46,6 @@ export async function POST(request) {
         return existing.id;
       }
 
-      // Auto-create topic
       const created = await prisma.topic.create({
         data: {
           name: topicName.trim(),
@@ -53,11 +61,29 @@ export async function POST(request) {
 
     for (const q of questions) {
       try {
-        // Duplicate check — exact question text match in same exam
+        if (!q.chapterId) {
+          errors++;
+          continue;
+        }
+
+        // Chapter is source of truth - derive examId + subjectId from it.
+        // Client examId/subjectId IGNORED so a row can never land in the wrong exam/subject.
+        let examId, subjectId, chapterId;
+        try {
+          ({ examId, subjectId, chapterId } = await getClassification(
+            q.chapterId,
+          ));
+        } catch (e) {
+          console.error("Invalid chapter in row:", q.chapterId, e.message);
+          errors++;
+          continue;
+        }
+
+        // Duplicate check - same text within the derived exam
         const existing = await prisma.question.findFirst({
           where: {
             questionText: q.questionText,
-            examId: parseInt(q.examId),
+            examId,
           },
           select: { id: true },
         });
@@ -67,9 +93,8 @@ export async function POST(request) {
           continue;
         }
 
-        // Resolve or auto-create topic
         const topicId = q.topicName
-          ? await resolveTopicId(q.topicName, q.chapterId)
+          ? await resolveTopicId(q.topicName, chapterId)
           : q.topicId
             ? parseInt(q.topicId)
             : null;
@@ -79,10 +104,10 @@ export async function POST(request) {
             questionText: q.questionText,
             questionType: q.questionType || "MCQ",
             difficulty: q.difficulty || "MEDIUM",
-            examId: parseInt(q.examId),
-            subjectId: parseInt(q.subjectId),
-            chapterId: parseInt(q.chapterId),
-            topicId: topicId,
+            examId,
+            subjectId,
+            chapterId,
+            topicId,
             solutionText: q.solutionText || null,
             tags: q.tags || [],
             isActive: true,
