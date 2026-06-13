@@ -84,6 +84,7 @@ export async function POST(request) {
           where: {
             questionText: q.questionText,
             examId,
+            isActive: true,
           },
           select: { id: true },
         });

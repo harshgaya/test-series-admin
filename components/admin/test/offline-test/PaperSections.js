@@ -547,7 +547,6 @@ function AutoBuildTab({ exams, selectedIds, onAddQuestions }) {
 
   useEffect(() => {
     if (!primaryExamId) return;
-    // Load subjects for this exam
     fetch(`/api/subjects?examId=${primaryExamId}`)
       .then((r) => r.json())
       .then((d) => {

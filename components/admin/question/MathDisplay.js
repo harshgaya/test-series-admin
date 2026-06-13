@@ -1,16 +1,27 @@
 "use client";
-
 import { useEffect, useState } from "react";
+// Import KaTeX CSS as a bundled module so the radical signs, fraction bars,
+// superscripts, etc. always render. (Loading it from a CDN at runtime can be
+// blocked by CSP/ad-blockers/offline, which makes math collapse to bare
+// characters: \sqrt{2} shows as "2", \frac{p}{q} shows as "qp".)
+import "katex/dist/katex.min.css";
 
-// Load KaTeX CSS once globally
-function ensureKatexCss() {
-  if (typeof document === "undefined") return;
-  if (document.getElementById("katex-css")) return;
-  const link = document.createElement("link");
-  link.id = "katex-css";
-  link.rel = "stylesheet";
-  link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css";
-  document.head.appendChild(link);
+// Load katex + mhchem once and cache the promise.
+// mhchem mutates the katex module to add \ce and \pu, so it must be
+// required immediately after katex, before any renderToString call.
+let katexPromise = null;
+export function loadKatex() {
+  if (katexPromise) return katexPromise;
+  katexPromise = import("katex").then(async (k) => {
+    const katex = k.default;
+    try {
+      await import("katex/contrib/mhchem");
+    } catch {
+      // mhchem failed to load; \ce will fall back to plain text below
+    }
+    return katex;
+  });
+  return katexPromise;
 }
 
 export function renderMathToHtml(value, katex) {
@@ -45,7 +56,8 @@ export function renderMathToHtml(value, katex) {
     const hasDollar = /\$/.test(value);
     const hasLatex = /\\[a-zA-Z]/.test(value);
 
-    // No $ but has latex commands - render whole thing as inline math
+    // No $ but has latex commands (including bare \ce{...}) - render whole
+    // thing as inline math so KaTeX + mhchem handle it natively.
     if (!hasDollar && hasLatex) {
       try {
         return renderInline(value);
@@ -59,11 +71,19 @@ export function renderMathToHtml(value, katex) {
       return escapeHtml(value).replace(/\n/g, "<br/>");
     }
 
-    // Mixed content with $...$ blocks
-    let result = value;
+    // Mixed content with $...$ blocks.
+    //
+    // IMPORTANT: convert line breaks to <br/> on the RAW source FIRST, before
+    // any math is rendered. KaTeX's output for \sqrt, \frac, etc. contains
+    // SVG <path d="..."> data with embedded newlines; running a \n -> <br/>
+    // replace AFTER rendering corrupts those paths (injecting <br/> mid-path),
+    // which makes radicals/fractions fail to draw and collapse to bare text.
+    // Math inside $...$ is .trim()'d when rendered, so these <br/> markers
+    // only ever sit in the plain-text segments and never reach KaTeX.
+    let result = value.replace(/\r\n/g, "\n").replace(/\n/g, "<br/>");
 
-    // Display math $$...$$
-    result = result.replace(/\$\$([^$]+)\$\$/g, (_, math) => {
+    // Display math $$...$$  (non-greedy)
+    result = result.replace(/\$\$([\s\S]+?)\$\$/g, (_, math) => {
       try {
         return renderDisplay(math);
       } catch {
@@ -71,8 +91,8 @@ export function renderMathToHtml(value, katex) {
       }
     });
 
-    // Inline math $...$
-    result = result.replace(/\$([^$\n]+)\$/g, (_, math) => {
+    // Inline math $...$  (non-greedy)
+    result = result.replace(/\$([\s\S]+?)\$/g, (_, math) => {
       try {
         return renderInline(math);
       } catch {
@@ -80,17 +100,10 @@ export function renderMathToHtml(value, katex) {
       }
     });
 
-    // Chemistry \ce{...}
-    result = result.replace(/\\ce\{([^}]+)\}/g, (_, chem) => {
-      try {
-        return renderInline(`\\mathrm{${chem}}`);
-      } catch {
-        return `<span style="font-family:monospace">${escapeHtml(chem)}</span>`;
-      }
-    });
-
-    // Line breaks
-    result = result.replace(/\n/g, "<br/>");
+    // NOTE: \ce is intentionally NOT handled here by a custom replace.
+    // With mhchem loaded, \ce works natively inside the $...$ blocks above.
+    // Any bare \ce{...} outside $...$ is caught by the "no dollar, has latex"
+    // branch near the top of this function.
 
     return result;
   } catch {
@@ -99,7 +112,7 @@ export function renderMathToHtml(value, katex) {
 }
 
 /**
- * MathDisplay - renders LaTeX math using KaTeX
+ * MathDisplay - renders LaTeX math using KaTeX (with mhchem for \ce / \pu)
  * Same rendering logic as MathEditor preview box
  *
  * Usage:
@@ -110,21 +123,21 @@ export default function MathDisplay({ text, className = "", style = {} }) {
   const [html, setHtml] = useState("");
 
   useEffect(() => {
-    ensureKatexCss();
-  }, []);
-
-  useEffect(() => {
     if (!text) {
       setHtml("");
       return;
     }
-    import("katex")
-      .then((k) => {
-        setHtml(renderMathToHtml(text, k.default));
+    let active = true;
+    loadKatex()
+      .then((katex) => {
+        if (active) setHtml(renderMathToHtml(text, katex));
       })
       .catch(() => {
-        setHtml(text);
+        if (active) setHtml(text);
       });
+    return () => {
+      active = false;
+    };
   }, [text]);
 
   if (!text) return null;
