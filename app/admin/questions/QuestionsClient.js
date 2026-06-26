@@ -147,9 +147,9 @@ export default function QuestionsClient({ filters }) {
     <>
       <div className="page-header flex-wrap gap-3">
         <div>
-          <p className="page-title">
+          {/* <p className="page-title">
             Questions ({total.toLocaleString("en-IN")})
-          </p>
+          </p> */}
           <p className="page-subtitle">All questions in the question bank</p>
         </div>
         <div className="flex items-center gap-2">
